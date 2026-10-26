@@ -26,6 +26,7 @@ Public Sub Rib_Sheet(control As IRibbonControl)
         Case "unhidename": Sh_HideMatch False
         Case "unhideall": Sh_UnhideAll
         Case "toc": Sh_Contents
+        Case "auto": Auto_Run
         Case Else
             If Left$(t, 4) = "col:" Then Sh_TabColour Mid$(t, 5)
     End Select

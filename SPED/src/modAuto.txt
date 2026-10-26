@@ -1,0 +1,346 @@
+Attribute VB_Name = "modAuto"
+Option Explicit
+
+'==========================================================================
+' SPED - Auto: one click to tidy a sheet (clean text, fix text numbers and
+' dates, one font, sensible alignment, auto-fit columns and rows).
+'==========================================================================
+
+Private Const AUTO_FONT As String = "Calibri"
+Private Const AUTO_SIZE As Double = 10
+Private Const MIN_W As Double = 6
+Private Const MAX_W As Double = 50
+Private Const MAX_CELLS As Double = 500000
+Private Const MAX_CHANGES As Long = 100000
+
+Private Function Tidy(ByVal s As String) As String
+    Dim i As Long
+    Dim j As Long
+    s = Replace(s, ChrW(160), " ")
+    s = Replace(s, ChrW(8203), "")
+    s = Replace(s, ChrW(8204), "")
+    s = Replace(s, ChrW(8205), "")
+    s = Replace(s, ChrW(65279), "")
+    s = Replace(s, ChrW(173), "")
+    s = Replace(s, ChrW(65533), "")
+    s = Replace(s, vbTab, " ")
+    s = Replace(s, vbCr, "")
+    For i = 0 To 31
+        If i <> 10 Then s = Replace(s, Chr$(i), "")
+    Next i
+    s = Replace(s, Chr$(127), "")
+    i = 1
+    j = Len(s)
+    Do While i <= j
+        If Mid$(s, i, 1) = " " Or Mid$(s, i, 1) = vbLf Then i = i + 1 Else Exit Do
+    Loop
+    Do While j >= i
+        If Mid$(s, j, 1) = " " Or Mid$(s, j, 1) = vbLf Then j = j - 1 Else Exit Do
+    Loop
+    Tidy = Mid$(s, i, j - i + 1)
+End Function
+
+Private Function AreaArr(ByVal ar As Range) As Variant
+    Dim a() As Variant
+    If ar.CountLarge = 1 Then
+        ReDim a(1 To 1, 1 To 1)
+        a(1, 1) = ar.Value
+        AreaArr = a
+    Else
+        AreaArr = ar.Value
+    End If
+End Function
+
+Private Function Show1(ByVal s As String) As String
+    s = Replace(s, vbLf, "/")
+    If Len(s) > 22 Then s = Left$(s, 21) & "~"
+    Show1 = "[" & s & "]"
+End Function
+
+Private Function Examples(ByRef cs As SpedChange, ByVal maxN As Long) As String
+    Dim i As Long
+    Dim k As Long
+    Dim o As String
+    Dim n As String
+    For i = 1 To cs.n
+        If k >= maxN Then Exit For
+        If VarType(cs.oldVal(i)) = vbString Then
+            o = Show1(CStr(cs.oldVal(i)))
+            If VarType(cs.newVal(i)) = vbString Then
+                n = Show1(CStr(cs.newVal(i)))
+            ElseIf InStr(cs.newNF(i), "yy") > 0 Then
+                n = Format(CDate(cs.newVal(i)), "dd-mmm-yyyy")
+            Else
+                n = CStr(cs.newVal(i))
+            End If
+            Examples = Examples & cs.addr(i) & ": " & o & " -> " & n & vbCrLf
+            k = k + 1
+        End If
+    Next i
+End Function
+
+Public Sub Auto_Run()
+    Dim ws As Worksheet
+    Dim rng As Range
+    Dim scopeTxt As String
+    Dim tc As Range
+    Dim tn As Range
+    Dim ar As Range
+    Dim arr As Variant
+    Dim i As Long
+    Dim j As Long
+    Dim s0 As String
+    Dim t As String
+    Dim v As Double
+    Dim pct As Boolean
+    Dim skz As Boolean
+    Dim dt As Date
+    Dim amb As Boolean
+    Dim handled As Boolean
+    Dim cs As SpedChange
+    Dim c As Range
+    Dim nf As Variant
+    Dim nTrim As Long
+    Dim nNum As Long
+    Dim nDate As Long
+    Dim nAmb As Long
+    Dim nFmt As Long
+    Dim nfNew As String
+    Dim hdrRow As Long
+    Dim lastRow As Long
+    Dim r As Long
+    Dim slice As Range
+    Dim cnt As Long
+    Dim fitRng As Range
+    Dim vis As Range
+    Dim a As Range
+    Dim calc As Long
+    Dim msg As String
+    Dim hdr As Range
+    Dim w As Double
+    Dim firstNon As Long
+
+    On Error GoTo bail
+    If TypeName(ActiveSheet) <> "Worksheet" Then
+        MsgBox "Activate a worksheet first.", vbExclamation, "SPED - Auto"
+        Exit Sub
+    End If
+    Set ws = ActiveSheet
+    If ws.ProtectContents Then
+        MsgBox "This sheet is protected. Unprotect it first.", vbExclamation, "SPED - Auto"
+        Exit Sub
+    End If
+    If Application.WorksheetFunction.CountA(ws.UsedRange) = 0 Then
+        MsgBox "The sheet is empty.", vbInformation, "SPED - Auto"
+        Exit Sub
+    End If
+
+    If TypeName(Selection) = "Range" Then
+        If Selection.CountLarge > 1 Then
+            If Selection.Areas.Count > 1 Then
+                MsgBox "Please select one block of cells, or a single cell to do the whole sheet.", vbExclamation, "SPED - Auto"
+                Exit Sub
+            End If
+            Set rng = Intersect(Selection, ws.UsedRange)
+            If rng Is Nothing Then
+                MsgBox "There is no data in the selection.", vbInformation, "SPED - Auto"
+                Exit Sub
+            End If
+            scopeTxt = "selection"
+        End If
+    End If
+    If rng Is Nothing Then
+        Set rng = ws.UsedRange
+        scopeTxt = "whole sheet"
+    End If
+    If rng.CountLarge > MAX_CELLS Then
+        MsgBox "That is more than " & Format(MAX_CELLS, "#,##0") & " cells. Select a smaller block.", vbExclamation, "SPED - Auto"
+        Exit Sub
+    End If
+
+    Application.StatusBar = "SPED Auto: checking the data..."
+    Application.ScreenUpdating = False
+
+    '---- 1. text: clean, then recognise numbers and dates ---------------
+    Set tc = Nothing
+    On Error Resume Next
+    Set tc = rng.SpecialCells(xlCellTypeConstants, xlTextValues)
+    On Error GoTo bail
+    If Not tc Is Nothing Then
+        For Each ar In tc.Areas
+            arr = AreaArr(ar)
+            For i = 1 To UBound(arr, 1)
+                For j = 1 To UBound(arr, 2)
+                    If VarType(arr(i, j)) = vbString Then
+                        If cs.n >= MAX_CHANGES Then GoTo doneText
+                        s0 = CStr(arr(i, j))
+                        t = Tidy(s0)
+                        handled = False
+                        If Len(t) > 0 Then
+                            If ParseNumberText(t, 3, v, pct, skz) Then
+                                If pct Then
+                                    nfNew = "0.00%"
+                                ElseIf InStr(t, ".") > 0 Or InStr(t, ",") > 0 Or InStr(t, "(") > 0 Then
+                                    nfNew = "#,##0.00"
+                                Else
+                                    nfNew = "General"
+                                End If
+                                Set c = ar.Cells(i, j)
+                                Chg_Add cs, c.Address(False, False), s0, v, CStr(c.NumberFormat), nfNew
+                                nNum = nNum + 1
+                                handled = True
+                            ElseIf ParseDateText(t, True, dt, amb) Then
+                                If dt <> Int(dt) Then nfNew = "dd-mmm-yyyy hh:nn" Else nfNew = "dd-mmm-yyyy"
+                                Set c = ar.Cells(i, j)
+                                Chg_Add cs, c.Address(False, False), s0, CDbl(dt), CStr(c.NumberFormat), nfNew
+                                nDate = nDate + 1
+                                If amb Then nAmb = nAmb + 1
+                                handled = True
+                            End If
+                        End If
+                        If Not handled And t <> s0 Then
+                            Set c = ar.Cells(i, j)
+                            Chg_Add cs, c.Address(False, False), s0, t, CStr(c.NumberFormat), ""
+                            nTrim = nTrim + 1
+                        End If
+                    End If
+                Next j
+            Next i
+        Next ar
+    End If
+doneText:
+
+    '---- 2. real numbers stuck in Text format ----------------------------
+    Set tn = Nothing
+    On Error Resume Next
+    Set tn = rng.SpecialCells(xlCellTypeConstants, xlNumbers)
+    On Error GoTo bail
+    If Not tn Is Nothing Then
+        For Each ar In tn.Areas
+            If cs.n >= MAX_CHANGES Then Exit For
+            nf = ar.NumberFormat
+            If IsNull(nf) Then
+                For Each c In ar.Cells
+                    If c.NumberFormat = "@" And cs.n < MAX_CHANGES Then
+                        Chg_Add cs, c.Address(False, False), c.Value2, c.Value2, "@", "General"
+                        nFmt = nFmt + 1
+                    End If
+                Next c
+            ElseIf CStr(nf) = "@" Then
+                For Each c In ar.Cells
+                    If cs.n < MAX_CHANGES Then
+                        Chg_Add cs, c.Address(False, False), c.Value2, c.Value2, "@", "General"
+                        nFmt = nFmt + 1
+                    End If
+                Next c
+            End If
+        Next ar
+    End If
+
+    '---- heading row: first row with two or more filled cells --------------
+    lastRow = rng.Row + rng.Rows.Count - 1
+    firstNon = 0
+    For r = rng.Row To lastRow
+        If r > rng.Row + 14 Then Exit For
+        Set slice = Intersect(rng, ws.Rows(r))
+        cnt = Application.WorksheetFunction.CountA(slice)
+        If cnt >= 2 Then
+            hdrRow = r
+            Exit For
+        ElseIf cnt = 1 And firstNon = 0 Then
+            firstNon = r
+        End If
+    Next r
+    If hdrRow = 0 Then hdrRow = firstNon
+
+    '---- confirm -----------------------------------------------------------
+    msg = "Auto format on '" & ws.Name & "' (" & scopeTxt & ", " & rng.Address(False, False) & "):" & vbCrLf & vbCrLf
+    msg = msg & "- Clean spaces / hidden characters: " & nTrim & " cell(s)" & vbCrLf
+    msg = msg & "- Text to numbers: " & nNum & "   Text to dates: " & nDate & IIf(nAmb > 0, " (" & nAmb & " unclear, read day/month/year)", "") & vbCrLf
+    msg = msg & "- Numbers stuck in Text format fixed: " & nFmt & vbCrLf
+    msg = msg & "- Font " & AUTO_FONT & " " & AUTO_SIZE & ", text left, numbers right" & IIf(hdrRow > 0, ", heading row " & hdrRow & " centred and bold", "") & vbCrLf
+    msg = msg & "- Fit column widths (" & MIN_W & " to " & MAX_W & ") and row heights" & vbCrLf
+    If cs.n > 0 Then msg = msg & vbCrLf & "Examples:" & vbCrLf & Examples(cs, 6)
+    msg = msg & vbCrLf & "Value changes can be undone with SPED > Undo. Fonts, alignment and widths cannot." & vbCrLf & "Apply now?"
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
+    If MsgBox(msg, vbYesNo + vbQuestion, "SPED - Auto") = vbNo Then Exit Sub
+
+    '---- apply ---------------------------------------------------------------
+    calc = Application.Calculation
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.StatusBar = "SPED Auto: working..."
+
+    For i = 1 To cs.n
+        Set c = ws.Range(cs.addr(i))
+        If VarType(cs.newVal(i)) = vbString Then
+            WriteText c, CStr(cs.newVal(i))
+        Else
+            If Len(cs.newNF(i)) > 0 Then c.NumberFormat = cs.newNF(i)
+            c.Value2 = cs.newVal(i)
+        End If
+    Next i
+    If cs.n > 0 Then Undo_PushCells "Auto format (" & cs.n & " cells on " & ws.Name & ")", ws, cs
+
+    rng.Font.Name = AUTO_FONT
+    rng.Font.Size = AUTO_SIZE
+    rng.VerticalAlignment = xlCenter
+    rng.HorizontalAlignment = xlLeft
+    On Error Resume Next
+    rng.SpecialCells(xlCellTypeConstants, xlNumbers).HorizontalAlignment = xlRight
+    rng.SpecialCells(xlCellTypeFormulas, xlNumbers).HorizontalAlignment = xlRight
+    On Error GoTo bail
+    If hdrRow > 0 Then
+        Set hdr = Intersect(rng, ws.Rows(hdrRow))
+        hdr.HorizontalAlignment = xlCenter
+        hdr.Font.Bold = True
+    End If
+
+    ' column widths: ignore title lines above the heading row
+    Set fitRng = rng
+    If hdrRow > rng.Row Then
+        Set fitRng = ws.Range(ws.Cells(hdrRow, rng.Column), ws.Cells(lastRow, rng.Column + rng.Columns.Count - 1))
+    End If
+    Set vis = Nothing
+    On Error Resume Next
+    Set vis = fitRng.SpecialCells(xlCellTypeVisible)
+    On Error GoTo bail
+    If Not vis Is Nothing Then
+        For Each a In vis.Areas
+            a.Columns.AutoFit
+        Next a
+    End If
+    For j = 1 To rng.Columns.Count
+        If Not rng.Columns(j).EntireColumn.Hidden Then
+            w = rng.Columns(j).ColumnWidth
+            If w > MAX_W Then
+                rng.Columns(j).ColumnWidth = MAX_W
+            ElseIf w < MIN_W Then
+                rng.Columns(j).ColumnWidth = MIN_W
+            End If
+        End If
+    Next j
+
+    Set vis = Nothing
+    On Error Resume Next
+    Set vis = rng.SpecialCells(xlCellTypeVisible)
+    On Error GoTo bail
+    If Not vis Is Nothing Then
+        For Each a In vis.Areas
+            a.Rows.AutoFit
+        Next a
+    End If
+
+    Application.Calculation = calc
+    Application.ScreenUpdating = True
+    Application.StatusBar = "SPED Auto: " & ws.Name & " tidied (" & cs.n & " value change(s))."
+    Log_Add "Auto format", ws.Name & " " & rng.Address(False, False) & ": " & nTrim & " cleaned, " & nNum & " numbers, " & nDate & " dates, " & nFmt & " formats"
+    Exit Sub
+bail:
+    On Error Resume Next
+    Application.Calculation = calc
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
+    MsgBox "Auto stopped: " & Err.Description, vbExclamation, "SPED - Auto"
+End Sub

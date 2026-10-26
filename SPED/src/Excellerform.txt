@@ -246,7 +246,8 @@ Private Sub BuildTools()
     AddBtn "hidename", &H25CC, "Hide by name...", "Act_HideName", "N"
     AddBtn "unhidename", &H25C9, "Unhide by name...", "Act_UnhideName", "N"
     AddBtn "unhideall", &H25C9, "Unhide all sheets", "Act_UnhideAll", "N"
-    AddBtn "toc", &H2630, "Make contents sheet", "Act_Contents", "P"
+    AddBtn "toc", &H2630, "Make contents sheet", "Act_Contents", "N"
+    AddBtn "autofmt", &H2263, "Auto format sheet", "Act_Auto", "P"
 
     AddSection Me.Controls.Add("Forms.Label.1", "uiSecAudit", True), "AUDIT"
     AddBtn "auall", &H2714, "Highlight all", "Act_AuAll", "N"
@@ -421,6 +422,10 @@ End Sub
 Public Sub Act_Data()
     g_PanelPage = "tools3"
     Reopen
+End Sub
+
+Public Sub Act_Auto()
+    Auto_Run
 End Sub
 
 Public Sub Act_Tidy()

@@ -583,7 +583,7 @@ End Sub
 Public Function Fav_AllKeys() As Variant
     Fav_AllKeys = Array("selall", "selcopy", "copydown", "newrow", "delrow", "find", "calendar", "sheets", "copysheet", "summary", _
                         "tidy", "dates", "nums", "cmpr", "cmpc", "inspect", "protect", "unprotect", _
-                        "sortaz", "sortza", "toc", "auall", "auclear", "undo", "runlog")
+                        "sortaz", "sortza", "toc", "auto", "auall", "auclear", "undo", "runlog")
 End Function
 
 Public Function Fav_Info(ByVal key As String, ByRef glyph As Long, ByRef cap As String, ByRef act As String) As Boolean
@@ -610,6 +610,7 @@ Public Function Fav_Info(ByVal key As String, ByRef glyph As Long, ByRef cap As 
         Case "sortaz": glyph = &H2193: cap = "Sort sheets A-Z": act = "Act_SortAZ"
         Case "sortza": glyph = &H2191: cap = "Sort sheets Z-A": act = "Act_SortZA"
         Case "toc": glyph = &H2630: cap = "Contents sheet": act = "Act_Contents"
+        Case "auto": glyph = &H2263: cap = "Auto format sheet": act = "Act_Auto"
         Case "auall": glyph = &H2714: cap = "Audit: highlight all": act = "Act_AuAll"
         Case "auclear": glyph = &H2716: cap = "Audit: clear colours": act = "Act_AuClear"
         Case "undo": glyph = &H21B6: cap = "Undo last SPED change": act = "Act_Undo"

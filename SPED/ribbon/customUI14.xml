@@ -60,6 +60,7 @@
             <button id="shUa" label="Unhide all" onAction="Rib_Sheet" tag="unhideall"/>
           </menu>
           <button id="shToc" label="Contents" onAction="Rib_Sheet" tag="toc" image="img_toc" size="large" supertip="Make a Contents sheet with links to every sheet."/>
+          <button id="shAuto" label="Auto" onAction="Rib_Sheet" tag="auto" image="img_auto" size="large" supertip="Tidy the sheet: trim spaces, fix text numbers and dates, one font, alignment and column widths."/>
         </group>
         <group id="spedAuditG" label="Audit">
           <menu id="auHi" label="Highlight" image="img_highlight" size="large">
