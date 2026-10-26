@@ -18,7 +18,7 @@ var addin []byte
 
 const (
 	appName = "SPED"
-	version = "1.2.0"
+	version = "1.3.0"
 	regKey  = `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\SPED`
 )
 

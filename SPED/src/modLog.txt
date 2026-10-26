@@ -5,7 +5,7 @@ Option Explicit
 ' SPED - run log, undo stack and update checker
 '==========================================================================
 
-Public Const SPED_VERSION As String = "1.2.0"
+Public Const SPED_VERSION As String = "1.3.0"
 
 Public Type SpedChange
     n As Long

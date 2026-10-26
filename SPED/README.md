@@ -1,4 +1,4 @@
-# SPED for Excel (v1.2.0)
+# SPED for Excel (v1.3.0)
 
 An Excel add-in for accounting work: cell-format library, sheet tools, audit highlighter, data cleaning, compare tools, workbook inspector, sheet protection, favourites bar, run log with undo, and an update checker.
 
