@@ -1,0 +1,705 @@
+Attribute VB_Name = "modCellFormat"
+Option Explicit
+
+'==========================================================================
+' SPED - Cell Format library
+' Save the look of a cell (number format, font, fill, alignment, borders,
+' optional column width / row height), pick it from the ribbon dropdown and
+' then click or drag over cells to apply it. Formats are stored in
+' %APPDATA%\SPED\formats.txt and shared by every workbook.
+'==========================================================================
+
+Private Const FILE_NAME As String = "formats.txt"
+Private Const UNDO_LEVELS As Long = 5
+Private Const BIG_SELECTION As Double = 50000
+Private Const SNAPSHOT_LIMIT As Double = 20000
+
+Private m_Ribbon As IRibbonUI
+Private m_On As Boolean
+Private m_Busy As Boolean
+Private m_ActiveName As String
+Private m_Fields() As String
+
+Private m_UndoPtr As Long
+Private m_UndoCount As Long
+Private m_UndoWb(1 To UNDO_LEVELS) As String
+Private m_UndoSh(1 To UNDO_LEVELS) As String
+Private m_UndoAddr(1 To UNDO_LEVELS) As String
+Private m_UndoOk(1 To UNDO_LEVELS) As Boolean
+
+'--------------------------------------------------------------------------
+' Ribbon callbacks
+'--------------------------------------------------------------------------
+Public Sub Rib_OnLoad(ribbon As IRibbonUI)
+    Set m_Ribbon = ribbon
+End Sub
+
+Public Sub Rib_CfMenu(control As IRibbonControl, ByRef returnedVal)
+    returnedVal = BuildMenuXml()
+End Sub
+
+Public Sub Rib_CfSave(control As IRibbonControl)
+    SaveCurrentFormat
+End Sub
+
+Public Sub Rib_CfUndo(control As IRibbonControl)
+    Cf_Undo
+End Sub
+
+Public Sub Rib_CfStop(control As IRibbonControl)
+    Cf_Stop
+End Sub
+
+Public Sub Rib_CfPick(control As IRibbonControl)
+    PickFormat CLng(Mid$(control.ID, 4))
+End Sub
+
+Public Sub Rib_CfDelete(control As IRibbonControl)
+    DeleteFormat CLng(Mid$(control.ID, 4))
+End Sub
+
+Public Sub Rib_CfRename(control As IRibbonControl)
+    RenameFormat CLng(Mid$(control.ID, 4))
+End Sub
+
+Private Sub RefreshMenu()
+    On Error Resume Next
+    If Not m_Ribbon Is Nothing Then m_Ribbon.InvalidateControl "spedCellFmt"
+End Sub
+
+Private Function XmlEsc(ByVal s As String) As String
+    s = Replace(s, "&", "&amp;")
+    s = Replace(s, "<", "&lt;")
+    s = Replace(s, ">", "&gt;")
+    s = Replace(s, Chr$(34), "&quot;")
+    XmlEsc = s
+End Function
+
+Private Function BuildMenuXml() As String
+    Dim col As Collection
+    Dim a() As String
+    Dim i As Long
+    Dim x As String
+    Dim lbl As String
+
+    Set col = ReadFormats()
+    x = "<menu xmlns=""http://schemas.microsoft.com/office/2009/07/customui"">"
+    x = x & "<button id=""cfSave"" label=""Save current cell format..."" imageMso=""FileSave"" onAction=""Rib_CfSave""/>"
+    x = x & "<button id=""cfUndo"" label=""Undo last format"" imageMso=""Undo"" onAction=""Rib_CfUndo""/>"
+    x = x & "<button id=""cfStop"" label=""Stop applying"" onAction=""Rib_CfStop""/>"
+    x = x & "<menuSeparator id=""cfSep1"" title=""Saved formats""/>"
+
+    If col.Count = 0 Then
+        x = x & "<button id=""cfNone"" label=""(none saved yet)"" enabled=""false""/>"
+    End If
+    For i = 1 To col.Count
+        a = Split(col(i), vbTab)
+        lbl = XmlEsc(a(1))
+        If m_On Then
+            If StrComp(a(1), m_ActiveName, vbTextCompare) = 0 Then lbl = "&#10003;  " & lbl
+        End If
+        x = x & "<button id=""cfP" & i & """ label=""" & lbl & """ onAction=""Rib_CfPick""/>"
+    Next i
+
+    If col.Count > 0 Then
+        x = x & "<menuSeparator id=""cfSep2""/>"
+        x = x & "<menu id=""cfDel"" label=""Delete format"">"
+        For i = 1 To col.Count
+            a = Split(col(i), vbTab)
+            x = x & "<button id=""cfD" & i & """ label=""" & XmlEsc(a(1)) & """ onAction=""Rib_CfDelete""/>"
+        Next i
+        x = x & "</menu>"
+        x = x & "<menu id=""cfRen"" label=""Rename format"">"
+        For i = 1 To col.Count
+            a = Split(col(i), vbTab)
+            x = x & "<button id=""cfR" & i & """ label=""" & XmlEsc(a(1)) & """ onAction=""Rib_CfRename""/>"
+        Next i
+        x = x & "</menu>"
+    End If
+    x = x & "</menu>"
+    BuildMenuXml = x
+End Function
+
+'--------------------------------------------------------------------------
+' Storage
+'--------------------------------------------------------------------------
+Private Function FormatsFolder() As String
+    FormatsFolder = Environ$("APPDATA") & "\SPED"
+End Function
+
+Private Function FormatsPath() As String
+    FormatsPath = FormatsFolder() & "\" & FILE_NAME
+End Function
+
+Private Sub EnsureFolder()
+    If Len(Dir(FormatsFolder(), vbDirectory)) = 0 Then MkDir FormatsFolder()
+End Sub
+
+Private Function ReadFormats() As Collection
+    Dim col As Collection
+    Dim f As Integer
+    Dim s As String
+
+    Set col = New Collection
+    On Error GoTo done
+    If Len(Dir(FormatsPath())) = 0 Then WriteStarters
+    f = FreeFile
+    Open FormatsPath() For Input As #f
+    Do While Not EOF(f)
+        Line Input #f, s
+        If Left$(s, 3) = "F1" & vbTab Then col.Add s
+    Loop
+done:
+    On Error Resume Next
+    Close #f
+    Set ReadFormats = col
+End Function
+
+Private Function WriteFormats(ByVal col As Collection) As Boolean
+    Dim f As Integer
+    Dim v As Variant
+
+    On Error GoTo fail
+    EnsureFolder
+    f = FreeFile
+    Open FormatsPath() For Output As #f
+    For Each v In col
+        Print #f, CStr(v)
+    Next v
+    Close #f
+    WriteFormats = True
+    Exit Function
+fail:
+    On Error Resume Next
+    Close #f
+    MsgBox "Could not save the formats file:" & vbCrLf & FormatsPath() & vbCrLf & Err.Description, vbExclamation, "SPED Cell Format"
+End Function
+
+Private Function NewFmt(ByVal nm As String) As String()
+    Dim a(0 To 28) As String
+    a(0) = "F1"
+    a(1) = nm
+    NewFmt = a
+End Function
+
+Private Sub WriteStarters()
+    Dim c As Collection
+    Dim a() As String
+    Dim q As String
+
+    q = Chr$(34)
+    Set c = New Collection
+
+    a = NewFmt("Rand 2dp")
+    a(2) = q & "R " & q & "#,##0.00;[Red]-" & q & "R " & q & "#,##0.00"
+    c.Add Join(a, vbTab)
+
+    a = NewFmt("Number 2dp")
+    a(2) = "#,##0.00;[Red]-#,##0.00"
+    c.Add Join(a, vbTab)
+
+    a = NewFmt("Date dd-mmm-yy")
+    a(2) = "dd-mmm-yy"
+    c.Add Join(a, vbTab)
+
+    a = NewFmt("Percent 1dp")
+    a(2) = "0.0%"
+    c.Add Join(a, vbTab)
+
+    a = NewFmt("Heading")
+    a(5) = "1"
+    a(8) = CStr(RGB(255, 255, 255))
+    a(9) = CStr(RGB(30, 41, 59))
+    a(10) = CStr(xlCenter)
+    c.Add Join(a, vbTab)
+
+    a = NewFmt("Total")
+    a(2) = "#,##0.00;[Red]-#,##0.00"
+    a(5) = "1"
+    a(17) = CStr(xlContinuous): a(18) = CStr(xlThin): a(19) = "0"
+    a(20) = CStr(xlDouble): a(21) = CStr(xlThick): a(22) = "0"
+    c.Add Join(a, vbTab)
+
+    a = NewFmt("Input (yellow)")
+    a(8) = CStr(RGB(0, 0, 255))
+    a(9) = CStr(RGB(255, 255, 0))
+    c.Add Join(a, vbTab)
+
+    WriteFormats c
+End Sub
+
+Private Function Fld(ByRef a() As String, ByVal i As Long) As String
+    If i < LBound(a) Or i > UBound(a) Then
+        Fld = ""
+    Else
+        Fld = a(i)
+    End If
+End Function
+
+'--------------------------------------------------------------------------
+' Save / delete / rename
+'--------------------------------------------------------------------------
+Private Sub SaveCurrentFormat()
+    Dim nm As String
+    Dim withSize As Boolean
+    Dim fmtLine As String
+    Dim col As Collection
+    Dim out As Collection
+    Dim a() As String
+    Dim i As Long
+    Dim found As Long
+
+    If TypeName(Selection) <> "Range" Then
+        MsgBox "Select a cell first.", vbExclamation, "SPED Cell Format"
+        Exit Sub
+    End If
+
+    nm = Trim$(InputBox("Name for the format taken from the active cell (" & ActiveCell.Address(False, False) & "):", "SPED - Save cell format"))
+    nm = Replace(nm, vbTab, " ")
+    If Len(nm) = 0 Then Exit Sub
+
+    withSize = (MsgBox("Also save column width and row height with this format?", vbYesNo + vbQuestion + vbDefaultButton2, "SPED - Save cell format") = vbYes)
+    fmtLine = CaptureCell(ActiveCell, nm, withSize)
+
+    Set col = ReadFormats()
+    For i = 1 To col.Count
+        a = Split(col(i), vbTab)
+        If StrComp(a(1), nm, vbTextCompare) = 0 Then
+            found = i
+            Exit For
+        End If
+    Next i
+
+    If found > 0 Then
+        If MsgBox("A format named '" & nm & "' already exists. Replace it?", vbYesNo + vbQuestion, "SPED - Save cell format") = vbNo Then Exit Sub
+    End If
+
+    Set out = New Collection
+    For i = 1 To col.Count
+        If i = found Then
+            out.Add fmtLine
+        Else
+            out.Add col(i)
+        End If
+    Next i
+    If found = 0 Then out.Add fmtLine
+
+    If Not WriteFormats(out) Then Exit Sub
+
+    If m_On Then
+        If StrComp(m_ActiveName, nm, vbTextCompare) = 0 Then m_Fields = Split(fmtLine, vbTab)
+    End If
+    RefreshMenu
+    Log_Add "Cell format saved", nm
+    MsgBox "Saved format '" & nm & "'.", vbInformation, "SPED Cell Format"
+End Sub
+
+Private Sub DeleteFormat(ByVal idx As Long)
+    Dim col As Collection
+    Dim out As Collection
+    Dim a() As String
+    Dim i As Long
+
+    Set col = ReadFormats()
+    If idx < 1 Or idx > col.Count Then Exit Sub
+    a = Split(col(idx), vbTab)
+    If MsgBox("Delete the format '" & a(1) & "'?", vbYesNo + vbQuestion, "SPED Cell Format") = vbNo Then Exit Sub
+
+    Set out = New Collection
+    For i = 1 To col.Count
+        If i <> idx Then out.Add col(i)
+    Next i
+    If Not WriteFormats(out) Then Exit Sub
+
+    If m_On Then
+        If StrComp(m_ActiveName, a(1), vbTextCompare) = 0 Then Cf_Stop
+    End If
+    RefreshMenu
+End Sub
+
+Private Sub RenameFormat(ByVal idx As Long)
+    Dim col As Collection
+    Dim out As Collection
+    Dim a() As String
+    Dim b() As String
+    Dim nm As String
+    Dim i As Long
+
+    Set col = ReadFormats()
+    If idx < 1 Or idx > col.Count Then Exit Sub
+    a = Split(col(idx), vbTab)
+    nm = Trim$(InputBox("New name for '" & a(1) & "':", "SPED - Rename format", a(1)))
+    nm = Replace(nm, vbTab, " ")
+    If Len(nm) = 0 Then Exit Sub
+
+    For i = 1 To col.Count
+        If i <> idx Then
+            b = Split(col(i), vbTab)
+            If StrComp(b(1), nm, vbTextCompare) = 0 Then
+                MsgBox "A format with that name already exists.", vbExclamation, "SPED Cell Format"
+                Exit Sub
+            End If
+        End If
+    Next i
+
+    a(1) = nm
+    Set out = New Collection
+    For i = 1 To col.Count
+        If i = idx Then
+            out.Add Join(a, vbTab)
+        Else
+            out.Add col(i)
+        End If
+    Next i
+    If Not WriteFormats(out) Then Exit Sub
+
+    If m_On Then
+        If StrComp(m_ActiveName, Split(col(idx), vbTab)(1), vbTextCompare) = 0 Then
+            m_ActiveName = nm
+            m_Fields = a
+        End If
+    End If
+    RefreshMenu
+End Sub
+
+'--------------------------------------------------------------------------
+' Capture a format from a cell
+'--------------------------------------------------------------------------
+Private Function CaptureCell(ByVal c As Range, ByVal nm As String, ByVal withSize As Boolean) As String
+    Dim a() As String
+
+    a = NewFmt(nm)
+    On Error Resume Next
+    a(2) = c.NumberFormat
+    a(3) = c.Font.Name
+    a(4) = CStr(c.Font.Size)
+    a(5) = IIf(c.Font.Bold = True, "1", "0")
+    a(6) = IIf(c.Font.Italic = True, "1", "0")
+    a(7) = CStr(c.Font.Underline)
+    a(8) = CStr(c.Font.Color)
+    If c.Interior.Pattern = xlNone Then
+        a(9) = "-1"
+    Else
+        a(9) = CStr(c.Interior.Color)
+    End If
+    a(10) = CStr(c.HorizontalAlignment)
+    a(11) = CStr(c.VerticalAlignment)
+    a(12) = IIf(c.WrapText = True, "1", "0")
+    a(13) = CStr(c.IndentLevel)
+    CaptureBorder c, xlEdgeLeft, a, 14
+    CaptureBorder c, xlEdgeTop, a, 17
+    CaptureBorder c, xlEdgeBottom, a, 20
+    CaptureBorder c, xlEdgeRight, a, 23
+    If withSize Then
+        a(26) = "1"
+        a(27) = CStr(c.ColumnWidth)
+        a(28) = CStr(c.RowHeight)
+    Else
+        a(26) = "0"
+    End If
+    CaptureCell = Join(a, vbTab)
+End Function
+
+Private Sub CaptureBorder(ByVal c As Range, ByVal edge As Long, ByRef a() As String, ByVal idx As Long)
+    With c.Borders(edge)
+        If .LineStyle = xlNone Then
+            a(idx) = CStr(xlNone)
+        Else
+            a(idx) = CStr(.LineStyle)
+            a(idx + 1) = CStr(.Weight)
+            a(idx + 2) = CStr(.Color)
+        End If
+    End With
+End Sub
+
+'--------------------------------------------------------------------------
+' Sticky "apply" mode
+'--------------------------------------------------------------------------
+Private Sub PickFormat(ByVal idx As Long)
+    Dim col As Collection
+
+    Set col = ReadFormats()
+    If idx < 1 Or idx > col.Count Then Exit Sub
+    m_Fields = Split(col(idx), vbTab)
+    m_ActiveName = m_Fields(1)
+    m_On = True
+    On Error Resume Next
+    Application.OnKey "{ESC}", "'" & ThisWorkbook.Name & "'!Cf_Stop"
+    Application.StatusBar = "SPED Cell Format: [" & m_ActiveName & "] - click or drag over cells to apply. Press Esc or Cell Format > Stop applying to finish."
+    RefreshMenu
+End Sub
+
+Public Sub Cf_Stop()
+    On Error Resume Next
+    m_On = False
+    Application.OnKey "{ESC}"
+    Application.StatusBar = False
+    RefreshMenu
+End Sub
+
+Public Sub Cf_OnSelection(ByVal Target As Object)
+    Dim ws As Worksheet
+    Dim n As Double
+
+    If Not m_On Then Exit Sub
+    If m_Busy Then Exit Sub
+    If TypeName(Target) <> "Range" Then Exit Sub
+
+    m_Busy = True
+    On Error GoTo fail
+    Set ws = Target.Worksheet
+    If ws.Parent.Name = ThisWorkbook.Name Then GoTo done
+    If ws.ProtectContents Then
+        Application.StatusBar = "SPED Cell Format: this sheet is protected - unprotect it to apply formats."
+        GoTo done
+    End If
+
+    n = Target.CountLarge
+    If n > BIG_SELECTION Then
+        If MsgBox("Apply [" & m_ActiveName & "] to " & Format(n, "#,##0") & " cells?", vbYesNo + vbQuestion, "SPED Cell Format") = vbNo Then GoTo done
+    End If
+
+    Application.ScreenUpdating = False
+    Snapshot Target
+    ApplyToRange Target
+    Application.ScreenUpdating = True
+    Application.StatusBar = "SPED Cell Format: applied [" & m_ActiveName & "] to " & Target.Address(False, False) & ". Keep selecting, or press Esc to finish."
+
+done:
+    m_Busy = False
+    Exit Sub
+fail:
+    Application.ScreenUpdating = True
+    Application.StatusBar = "SPED Cell Format error: " & Err.Description
+    m_Busy = False
+End Sub
+
+Private Sub ApplyToRange(ByVal t As Range)
+    Dim ar As Range
+    For Each ar In t.Areas
+        ApplyToArea ar
+    Next ar
+End Sub
+
+Private Sub ApplyToArea(ByVal t As Range)
+    Dim v As String
+    Dim k As Long
+
+    On Error Resume Next
+    v = Fld(m_Fields, 2): If Len(v) > 0 Then t.NumberFormat = v
+    v = Fld(m_Fields, 3): If Len(v) > 0 Then t.Font.Name = v
+    v = Fld(m_Fields, 4): If Len(v) > 0 Then t.Font.Size = CDbl(v)
+    v = Fld(m_Fields, 5): If Len(v) > 0 Then t.Font.Bold = (v = "1")
+    v = Fld(m_Fields, 6): If Len(v) > 0 Then t.Font.Italic = (v = "1")
+    v = Fld(m_Fields, 7): If Len(v) > 0 Then t.Font.Underline = CLng(v)
+    v = Fld(m_Fields, 8): If Len(v) > 0 Then t.Font.Color = CLng(v)
+
+    v = Fld(m_Fields, 9)
+    If v = "-1" Then
+        t.Interior.Pattern = xlNone
+    ElseIf Len(v) > 0 Then
+        t.Interior.Pattern = xlSolid
+        t.Interior.Color = CLng(v)
+    End If
+
+    v = Fld(m_Fields, 10): If Len(v) > 0 Then t.HorizontalAlignment = CLng(v)
+    v = Fld(m_Fields, 11): If Len(v) > 0 Then t.VerticalAlignment = CLng(v)
+    v = Fld(m_Fields, 12): If Len(v) > 0 Then t.WrapText = (v = "1")
+    v = Fld(m_Fields, 13): If Len(v) > 0 Then t.IndentLevel = CLng(v)
+
+    ApplyBorder t, xlEdgeLeft, 14
+    ApplyBorder t, xlEdgeTop, 17
+    ApplyBorder t, xlEdgeBottom, 20
+    ApplyBorder t, xlEdgeRight, 23
+
+    If t.Columns.Count > 1 Then
+        k = PickEdge(14, 23)
+        If k > 0 Then ApplyBorder t, xlInsideVertical, k
+    End If
+    If t.Rows.Count > 1 Then
+        k = PickEdge(17, 20)
+        If k > 0 Then ApplyBorder t, xlInsideHorizontal, k
+    End If
+
+    If Fld(m_Fields, 26) = "1" Then
+        v = Fld(m_Fields, 27): If Len(v) > 0 Then t.EntireColumn.ColumnWidth = CDbl(v)
+        v = Fld(m_Fields, 28): If Len(v) > 0 Then t.EntireRow.RowHeight = CDbl(v)
+    End If
+End Sub
+
+Private Function PickEdge(ByVal i1 As Long, ByVal i2 As Long) As Long
+    Dim s1 As String
+    Dim s2 As String
+    s1 = Fld(m_Fields, i1)
+    s2 = Fld(m_Fields, i2)
+    If Len(s1) > 0 And s1 <> CStr(xlNone) Then
+        PickEdge = i1
+    ElseIf Len(s2) > 0 And s2 <> CStr(xlNone) Then
+        PickEdge = i2
+    ElseIf Len(s1) > 0 Then
+        PickEdge = i1
+    ElseIf Len(s2) > 0 Then
+        PickEdge = i2
+    Else
+        PickEdge = 0
+    End If
+End Function
+
+Private Sub ApplyBorder(ByVal t As Range, ByVal edge As Long, ByVal idx As Long)
+    Dim ls As String
+    ls = Fld(m_Fields, idx)
+    If Len(ls) = 0 Then Exit Sub
+    If ls = CStr(xlNone) Then
+        t.Borders(edge).LineStyle = xlNone
+    Else
+        With t.Borders(edge)
+            .LineStyle = CLng(ls)
+            .Weight = CLng(Fld(m_Fields, idx + 1))
+            .Color = CLng(Fld(m_Fields, idx + 2))
+        End With
+    End If
+End Sub
+
+'--------------------------------------------------------------------------
+' Undo (best effort, last few applications, formats only)
+'--------------------------------------------------------------------------
+Private Function GetScratch(ByVal idx As Long) As Worksheet
+    Dim nm As String
+    Dim ws As Worksheet
+    Dim prevWb As Workbook
+    Dim prevSh As Object
+
+    nm = "SPED_U" & idx
+    On Error Resume Next
+    Set ws = ThisWorkbook.Worksheets(nm)
+    On Error GoTo 0
+    If ws Is Nothing Then
+        Set prevWb = ActiveWorkbook
+        Set prevSh = ActiveSheet
+        Set ws = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+        ws.Name = nm
+        ws.Visible = xlSheetVeryHidden
+        On Error Resume Next
+        prevWb.Activate
+        prevSh.Activate
+        On Error GoTo 0
+    End If
+    Set GetScratch = ws
+End Function
+
+Private Sub Snapshot(ByVal t As Range)
+    Dim idx As Long
+    Dim sc As Worksheet
+    Dim ar As Range
+    Dim addr As String
+
+    idx = (m_UndoPtr Mod UNDO_LEVELS) + 1
+    m_UndoPtr = m_UndoPtr + 1
+    If m_UndoCount < UNDO_LEVELS Then m_UndoCount = m_UndoCount + 1
+    m_UndoOk(idx) = False
+
+    On Error GoTo skip
+    If t.CountLarge > SNAPSHOT_LIMIT Then Exit Sub
+    Set sc = GetScratch(idx)
+    sc.Cells.Clear
+    For Each ar In t.Areas
+        ar.Copy Destination:=sc.Range(ar.Address(False, False))
+        If Len(addr) > 0 Then addr = addr & "|"
+        addr = addr & ar.Address(False, False)
+    Next ar
+    m_UndoWb(idx) = t.Worksheet.Parent.Name
+    m_UndoSh(idx) = t.Worksheet.Name
+    m_UndoAddr(idx) = addr
+    m_UndoOk(idx) = True
+skip:
+End Sub
+
+Public Sub Cf_Undo()
+    Dim idx As Long
+    Dim wb As Workbook
+    Dim dst As Worksheet
+    Dim sc As Worksheet
+    Dim parts() As String
+    Dim i As Long
+
+    If m_UndoCount = 0 Then
+        MsgBox "There is nothing to undo.", vbInformation, "SPED Cell Format"
+        Exit Sub
+    End If
+
+    idx = ((m_UndoPtr - 1) Mod UNDO_LEVELS) + 1
+    m_UndoPtr = m_UndoPtr - 1
+    m_UndoCount = m_UndoCount - 1
+
+    If Not m_UndoOk(idx) Then
+        MsgBox "That change was too large to undo.", vbInformation, "SPED Cell Format"
+        Exit Sub
+    End If
+
+    On Error GoTo fail
+    Set wb = Workbooks(m_UndoWb(idx))
+    Set dst = wb.Worksheets(m_UndoSh(idx))
+    Set sc = GetScratch(idx)
+    If Not wb Is ActiveWorkbook Then wb.Activate
+    If Not dst Is ActiveSheet Then dst.Activate
+
+    Application.ScreenUpdating = False
+    parts = Split(m_UndoAddr(idx), "|")
+    For i = LBound(parts) To UBound(parts)
+        sc.Range(parts(i)).Copy
+        dst.Range(parts(i)).PasteSpecial xlPasteFormats
+    Next i
+    Application.CutCopyMode = False
+    Application.ScreenUpdating = True
+    Application.StatusBar = "SPED Cell Format: last format undone (cell formats only, not column widths)."
+    Exit Sub
+fail:
+    Application.CutCopyMode = False
+    Application.ScreenUpdating = True
+    MsgBox "Could not undo: " & Err.Description, vbExclamation, "SPED Cell Format"
+End Sub
+
+'--------------------------------------------------------------------------
+' Helpers used by the SPED panel
+'--------------------------------------------------------------------------
+Public Sub Cf_Save()
+    SaveCurrentFormat
+End Sub
+
+Public Function Cf_FormatNames() As Variant
+    Dim col As Collection
+    Dim a() As String
+    Dim out() As String
+    Dim i As Long
+
+    Set col = ReadFormats()
+    If col.Count = 0 Then
+        Cf_FormatNames = Empty
+        Exit Function
+    End If
+    ReDim out(0 To col.Count - 1)
+    For i = 1 To col.Count
+        a = Split(col(i), vbTab)
+        out(i - 1) = a(1)
+    Next i
+    Cf_FormatNames = out
+End Function
+
+Public Function Cf_ActiveName() As String
+    If m_On Then Cf_ActiveName = m_ActiveName
+End Function
+
+Public Sub Cf_PickByName(ByVal nm As String)
+    Dim col As Collection
+    Dim a() As String
+    Dim i As Long
+
+    Set col = ReadFormats()
+    For i = 1 To col.Count
+        a = Split(col(i), vbTab)
+        If StrComp(a(1), nm, vbTextCompare) = 0 Then
+            PickFormat i
+            Exit Sub
+        End If
+    Next i
+End Sub

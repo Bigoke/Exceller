@@ -1,0 +1,214 @@
+Attribute VB_Name = "modInspect"
+Option Explicit
+
+'==========================================================================
+' SPED - Workbook inspector (report goes into a NEW workbook)
+'==========================================================================
+
+Private m_ws As Worksheet
+Private m_row As Long
+
+Private Sub Head(ByVal t As String)
+    m_row = m_row + 1
+    m_ws.Cells(m_row, 1).Value = t
+    With m_ws.Range(m_ws.Cells(m_row, 1), m_ws.Cells(m_row, 6))
+        .Font.Bold = True
+        .Font.Color = RGB(255, 255, 255)
+        .Interior.Color = RGB(31, 78, 121)
+    End With
+    m_row = m_row + 1
+End Sub
+
+Private Sub Line1(ByVal a As String, Optional ByVal b As String = "", Optional ByVal c As String = "", Optional ByVal d As String = "", Optional ByVal e As String = "", Optional ByVal f As String = "")
+    m_ws.Cells(m_row, 1).Value = "'" & a
+    If Len(b) > 0 Then m_ws.Cells(m_row, 2).Value = "'" & b
+    If Len(c) > 0 Then m_ws.Cells(m_row, 3).Value = "'" & c
+    If Len(d) > 0 Then m_ws.Cells(m_row, 4).Value = "'" & d
+    If Len(e) > 0 Then m_ws.Cells(m_row, 5).Value = "'" & e
+    If Len(f) > 0 Then m_ws.Cells(m_row, 6).Value = "'" & f
+    m_row = m_row + 1
+End Sub
+
+Private Function FileSizeText(ByVal wb As Workbook) As String
+    Dim n As Double
+    On Error Resume Next
+    n = FileLen(wb.FullName)
+    If Err.Number <> 0 Then
+        FileSizeText = "(not saved yet)"
+        Exit Function
+    End If
+    If n >= 1048576 Then
+        FileSizeText = Format(n / 1048576, "0.0") & " MB"
+    Else
+        FileSizeText = Format(n / 1024, "0") & " KB"
+    End If
+End Function
+
+Public Sub Insp_Run()
+    Dim wb As Workbook
+    Dim newWb As Workbook
+    Dim ws As Worksheet
+    Dim sh As Object
+    Dim nm As Name
+    Dim v As Variant
+    Dim i As Long
+    Dim n As Long
+    Dim lastR As Long
+    Dim lastC As Long
+    Dim ur As Range
+    Dim f As Range
+    Dim f2 As Range
+    Dim urRows As Double
+    Dim urCols As Double
+    Dim extra As String
+    Dim shp As Long
+    Dim cf As Long
+    Dim cm As Long
+    Dim hl As Long
+    Dim stl As Style
+    Dim custom As Long
+    Dim total As Long
+    Dim vis As String
+    Dim calc As Long
+    Dim nHidden As Long
+    Dim nBad As Long
+    Dim endTxt As String
+
+    On Error GoTo bail
+    Set wb = ActiveWorkbook
+    If wb Is Nothing Then Exit Sub
+    If wb.Name = ThisWorkbook.Name Then
+        MsgBox "Open the workbook you want to inspect and make it the active one.", vbInformation, "SPED - Inspector"
+        Exit Sub
+    End If
+
+    Application.ScreenUpdating = False
+    Application.StatusBar = "SPED: inspecting " & wb.Name & "..."
+    Set newWb = Workbooks.Add
+    Set m_ws = newWb.Worksheets(1)
+    m_ws.Name = "Inspection"
+    m_row = 1
+    m_ws.Cells(1, 1).Value = "SPED - Workbook inspector"
+    m_ws.Cells(1, 1).Font.Bold = True
+    m_ws.Cells(1, 1).Font.Size = 14
+    m_row = 2
+
+    Head "File"
+    Line1 "Name", wb.Name
+    Line1 "Location", wb.Path
+    Line1 "Size on disk", FileSizeText(wb)
+    Line1 "Sheets", CStr(wb.Sheets.Count)
+    Line1 "Inspected", Format(Now, "dd-mmm-yyyy hh:nn")
+
+    Head "Sheets (visibility)"
+    Line1 "Sheet", "Type", "Visibility"
+    For Each sh In wb.Sheets
+        Select Case sh.Visible
+            Case xlSheetVisible: vis = "Visible"
+            Case xlSheetHidden: vis = "HIDDEN": nHidden = nHidden + 1
+            Case xlSheetVeryHidden: vis = "VERY HIDDEN": nHidden = nHidden + 1
+        End Select
+        Line1 sh.Name, TypeName(sh), vis
+    Next sh
+
+    Head "External links"
+    v = Empty
+    On Error Resume Next
+    v = wb.LinkSources(xlExcelLinks)
+    On Error GoTo bail
+    n = 0
+    If IsArray(v) Then
+        For i = LBound(v) To UBound(v)
+            Line1 CStr(v(i))
+            n = n + 1
+        Next i
+    End If
+    If n = 0 Then Line1 "None found"
+
+    Head "Named ranges"
+    n = 0
+    For Each nm In wb.Names
+        n = n + 1
+        If InStr(nm.RefersTo, "#REF!") > 0 Then
+            nBad = nBad + 1
+            Line1 nm.Name, nm.RefersTo, "BROKEN (#REF!)", IIf(nm.Visible, "", "hidden name")
+        Else
+            Line1 nm.Name, nm.RefersTo, "", IIf(nm.Visible, "", "hidden name")
+        End If
+    Next nm
+    If n = 0 Then Line1 "None found"
+
+    Head "Sheet contents and unused ranges"
+    Line1 "Sheet", "Excel thinks used", "Data actually ends at", "Extra rows", "Extra columns", "Notes"
+    For Each ws In wb.Worksheets
+        shp = 0: cf = 0: cm = 0: hl = 0
+        extra = ""
+        lastR = 0: lastC = 0
+        On Error Resume Next
+        Set ur = ws.UsedRange
+        urRows = ur.Row + ur.Rows.Count - 1
+        urCols = ur.Column + ur.Columns.Count - 1
+        Set f = Nothing
+        Set f = ws.Cells.Find("*", , xlFormulas, xlPart, xlByRows, xlPrevious)
+        Set f2 = Nothing
+        Set f2 = ws.Cells.Find("*", , xlFormulas, xlPart, xlByColumns, xlPrevious)
+        If Not f Is Nothing Then lastR = f.Row
+        If Not f2 Is Nothing Then lastC = f2.Column
+        shp = ws.Shapes.Count
+        cf = ws.Cells.FormatConditions.Count
+        cm = ws.Comments.Count
+        hl = ws.Hyperlinks.Count
+        On Error GoTo bail
+        If shp > 0 Then extra = extra & shp & " shapes; "
+        If shp > 200 Then extra = extra & "(many shapes - check for stray objects); "
+        If cf > 0 Then extra = extra & cf & " conditional rules; "
+        If cf > 50 Then extra = extra & "(many rules - can slow the file); "
+        If cm > 0 Then extra = extra & cm & " comments; "
+        If hl > 0 Then extra = extra & hl & " hyperlinks; "
+        If ws.ProtectContents Then extra = extra & "protected; "
+        endTxt = "(empty)"
+        If lastR > 0 And lastC > 0 Then endTxt = ws.Cells(lastR, lastC).Address(False, False)
+        Line1 ws.Name, ur.Address(False, False), endTxt, CStr(urRows - lastR), CStr(urCols - lastC), extra
+        If urRows - lastR > 1000 Or urCols - lastC > 20 Then
+            m_ws.Cells(m_row - 1, 4).Interior.Color = RGB(255, 235, 132)
+            m_ws.Cells(m_row - 1, 5).Interior.Color = RGB(255, 235, 132)
+        End If
+    Next ws
+
+    Head "Cell styles"
+    total = wb.Styles.Count
+    For Each stl In wb.Styles
+        If Not stl.BuiltIn Then custom = custom + 1
+    Next stl
+    Line1 "Total styles", CStr(total)
+    Line1 "Custom (not built in)", CStr(custom), IIf(custom > 200, "MANY - this often bloats a file; consider removing unused styles", "")
+    If custom > 0 And custom <= 200 Then
+        i = 0
+        For Each stl In wb.Styles
+            If Not stl.BuiltIn Then
+                i = i + 1
+                If i <= 100 Then Line1 "  " & stl.Name
+            End If
+        Next stl
+        If custom > 100 Then Line1 "  ... and " & (custom - 100) & " more"
+    End If
+
+    Head "Summary"
+    Line1 "Hidden sheets", CStr(nHidden)
+    Line1 "Broken named ranges", CStr(nBad)
+    Line1 "Custom styles", CStr(custom)
+
+    m_ws.Columns("A").ColumnWidth = 34
+    m_ws.Columns("B:E").ColumnWidth = 28
+    m_ws.Columns("F").ColumnWidth = 50
+    m_ws.Range("A1").Select
+    Application.StatusBar = False
+    Application.ScreenUpdating = True
+    Log_Add "Workbook inspector", wb.Name & ": " & nHidden & " hidden sheets, " & nBad & " broken names, " & custom & " custom styles"
+    Exit Sub
+bail:
+    On Error Resume Next
+    Application.StatusBar = False
+    Application.ScreenUpdating = True
+    MsgBox "Inspector stopped: " & Err.Description, vbExclamation, "SPED - Inspector"
+End Sub

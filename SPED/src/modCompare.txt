@@ -1,0 +1,382 @@
+Attribute VB_Name = "modCompare"
+Option Explicit
+
+'==========================================================================
+' SPED - Compare two ranges / sheets, Compare columns
+'==========================================================================
+
+Private Const MAX_FILL As Long = 20000
+Private Const MAX_ROWS As Long = 5000
+
+Private Function PickRange(ByVal prompt As String, ByVal title As String, ByVal defAddr As String) As Range
+    Dim r As Range
+    On Error Resume Next
+    Set r = Application.InputBox(prompt, title, defAddr, Type:=8)
+    On Error GoTo 0
+    Set PickRange = r
+End Function
+
+Private Function Norm(ByVal v As Variant, ByVal ignoreCase As Boolean) As String
+    Dim s As String
+    If IsError(v) Then
+        Norm = "#ERR"
+        Exit Function
+    End If
+    If IsEmpty(v) Then
+        Norm = ""
+        Exit Function
+    End If
+    s = CStr(v)
+    If ignoreCase Then
+        s = LCase$(Application.WorksheetFunction.Trim(Replace(s, ChrW(160), " ")))
+    End If
+    Norm = s
+End Function
+
+Private Function CellText(ByVal c As Range, ByVal useFormulas As Boolean) As Variant
+    If useFormulas Then
+        CellText = c.Formula
+    Else
+        CellText = c.Value2
+    End If
+End Function
+
+Private Function SameVal(ByVal a As Variant, ByVal b As Variant, ByVal ignoreCase As Boolean, ByVal tol As Double) As Boolean
+    If IsError(a) Or IsError(b) Then
+        SameVal = (IsError(a) And IsError(b))
+        If SameVal Then SameVal = (CStr(a) = CStr(b))
+        Exit Function
+    End If
+    If IsNumeric(a) And IsNumeric(b) And VarType(a) <> vbString And VarType(b) <> vbString And Not IsEmpty(a) And Not IsEmpty(b) Then
+        SameVal = (Abs(CDbl(a) - CDbl(b)) <= tol)
+    ElseIf IsEmpty(a) And IsEmpty(b) Then
+        SameVal = True
+    Else
+        SameVal = (Norm(a, ignoreCase) = Norm(b, ignoreCase))
+    End If
+End Function
+
+Private Function SheetFor(ByVal wb As Workbook, ByVal nm As String) As Worksheet
+    Dim ws As Worksheet
+    Dim n As Long
+    Dim base As String
+    base = nm
+    On Error Resume Next
+    Set ws = wb.Worksheets(nm)
+    On Error GoTo 0
+    If Not ws Is Nothing Then
+        Application.DisplayAlerts = False
+        ws.Delete
+        Application.DisplayAlerts = True
+    End If
+    Set ws = wb.Worksheets.Add(After:=wb.Sheets(wb.Sheets.Count))
+    ws.Name = nm
+    Set SheetFor = ws
+End Function
+
+Private Function IsSheetProtected(ByVal ws As Worksheet) As Boolean
+    IsSheetProtected = ws.ProtectContents
+End Function
+
+'--------------------------------------------------------------------------
+' Compare two ranges (same position inside each range)
+'--------------------------------------------------------------------------
+Public Sub Cmp_Ranges()
+    Dim r1 As Range
+    Dim r2 As Range
+    Dim ans As String
+    Dim useF As Boolean
+    Dim ignoreCase As Boolean
+    Dim tolS As String
+    Dim tol As Double
+    Dim doFill As Boolean
+    Dim nR As Long
+    Dim nC As Long
+    Dim i As Long
+    Dim j As Long
+    Dim c1 As Range
+    Dim c2 As Range
+    Dim v1 As Variant
+    Dim v2 As Variant
+    Dim cs As SpedChange
+    Dim diffs() As Variant
+    Dim nd As Long
+    Dim total As Long
+    Dim rep As Worksheet
+    Dim wb As Workbook
+    Dim calc As Long
+    Dim sameBook As Boolean
+    Dim lbl1 As String
+    Dim lbl2 As String
+    Dim k As Long
+    Dim hasFill As Boolean
+    Dim ws1 As Worksheet
+
+    On Error GoTo bail
+    Set r1 = PickRange("Select the FIRST range (for example last month's statement)." & vbCrLf & "Click the sheet, then drag over the cells.", "SPED - Compare (1 of 2)", Selection.Address)
+    If r1 Is Nothing Then Exit Sub
+    If r1.Areas.Count > 1 Then
+        MsgBox "Please select one block of cells (not several separate blocks).", vbExclamation, "SPED - Compare"
+        Exit Sub
+    End If
+    Set r2 = PickRange("Select the SECOND range (the one to compare against)." & vbCrLf & "It will be compared cell by cell, from its top-left corner, with the first range.", "SPED - Compare (2 of 2)", "")
+    If r2 Is Nothing Then Exit Sub
+    If r2.Areas.Count > 1 Then
+        MsgBox "Please select one block of cells (not several separate blocks).", vbExclamation, "SPED - Compare"
+        Exit Sub
+    End If
+
+    nR = r1.Rows.Count
+    If r2.Rows.Count > nR Then nR = r2.Rows.Count
+    nC = r1.Columns.Count
+    If r2.Columns.Count > nC Then nC = r2.Columns.Count
+    If CDbl(nR) * nC > 250000# Then
+        MsgBox "That is too many cells to compare in one go. Use a smaller range.", vbExclamation, "SPED - Compare"
+        Exit Sub
+    End If
+    If r1.Rows.Count <> r2.Rows.Count Or r1.Columns.Count <> r2.Columns.Count Then
+        If MsgBox("The two ranges are different sizes (" & r1.Rows.Count & "x" & r1.Columns.Count & " and " & r2.Rows.Count & "x" & r2.Columns.Count & ")." & vbCrLf & "The extra cells will count as differences. Continue?", vbYesNo + vbQuestion, "SPED - Compare") = vbNo Then Exit Sub
+    End If
+
+    useF = (MsgBox("Compare formulas as typed?" & vbCrLf & vbCrLf & "Yes = compare the formulas (finds changed formulas)" & vbCrLf & "No = compare the values shown by the cells", vbYesNo + vbQuestion, "SPED - Compare") = vbYes)
+    ignoreCase = (MsgBox("Ignore capitals and extra spaces in text?", vbYesNo + vbQuestion, "SPED - Compare") = vbYes)
+    tolS = InputBox("Numbers: ignore differences smaller than (0 = exact):", "SPED - Compare", "0")
+    If StrPtr(tolS) = 0 Then Exit Sub
+    tol = Abs(Val(tolS))
+    doFill = (MsgBox("Colour the differing cells yellow in the FIRST range?" & vbCrLf & "(They can be undone with SPED > Undo last SPED change.)", vbYesNo + vbQuestion, "SPED - Compare") = vbYes)
+
+    If doFill Then
+        Set ws1 = r1.Worksheet
+        If ws1.ProtectContents Then
+            MsgBox "The first sheet is protected, so cells cannot be coloured. Differences will be listed only.", vbInformation, "SPED - Compare"
+            doFill = False
+        End If
+    End If
+
+    Application.ScreenUpdating = False
+    ReDim diffs(1 To MAX_ROWS, 1 To 4)
+    For i = 1 To nR
+        For j = 1 To nC
+            Set c1 = Nothing
+            Set c2 = Nothing
+            If i <= r1.Rows.Count And j <= r1.Columns.Count Then Set c1 = r1.Cells(i, j)
+            If i <= r2.Rows.Count And j <= r2.Columns.Count Then Set c2 = r2.Cells(i, j)
+            If c1 Is Nothing Then v1 = Empty Else v1 = CellText(c1, useF)
+            If c2 Is Nothing Then v2 = Empty Else v2 = CellText(c2, useF)
+            If useF Then
+                If Not (Norm(v1, ignoreCase) = Norm(v2, ignoreCase)) Then GoTo differ
+            Else
+                If Not SameVal(v1, v2, ignoreCase, tol) Then GoTo differ
+            End If
+            GoTo nextCell
+differ:
+            total = total + 1
+            If nd < MAX_ROWS Then
+                nd = nd + 1
+                If c1 Is Nothing Then diffs(nd, 1) = "(outside)" Else diffs(nd, 1) = c1.Address(False, False)
+                If c2 Is Nothing Then diffs(nd, 2) = "(outside)" Else diffs(nd, 2) = c2.Address(False, False)
+                If IsError(v1) Then diffs(nd, 3) = "'" & CStr(v1) Else diffs(nd, 3) = v1
+                If IsError(v2) Then diffs(nd, 4) = "'" & CStr(v2) Else diffs(nd, 4) = v2
+            End If
+            If doFill And Not c1 Is Nothing Then
+                If cs.n < MAX_FILL Then
+                    If c1.Interior.Pattern = xlNone Then
+                        Chg_Add cs, c1.Address(False, False), 0, 0, CStr(xlNone), ""
+                    Else
+                        Chg_Add cs, c1.Address(False, False), c1.Interior.Color, 0, "", ""
+                    End If
+                End If
+            End If
+nextCell:
+        Next j
+    Next i
+
+    If total = 0 Then
+        Application.ScreenUpdating = True
+        MsgBox "No differences found.", vbInformation, "SPED - Compare"
+        Log_Add "Compare ranges", "No differences"
+        Exit Sub
+    End If
+
+    Set wb = ActiveWorkbook
+    sameBook = (r1.Worksheet.Parent.Name = r2.Worksheet.Parent.Name)
+    lbl1 = "'" & r1.Worksheet.Parent.Name & "'!" & r1.Worksheet.Name
+    lbl2 = "'" & r2.Worksheet.Parent.Name & "'!" & r2.Worksheet.Name
+
+    calc = Application.Calculation
+    Application.Calculation = xlCalculationManual
+    If doFill Then
+        For i = 1 To cs.n
+            r1.Worksheet.Range(cs.addr(i)).Interior.Color = RGB(255, 235, 132)
+        Next i
+        Undo_PushFill "Compare highlight (" & cs.n & " cells on " & r1.Worksheet.Name & ")", r1.Worksheet, cs
+    End If
+
+    Set rep = SheetFor(wb, "SPED Compare")
+    rep.Range("A1").Value = "SPED - Compare ranges"
+    rep.Range("A1").Font.Bold = True
+    rep.Range("A1").Font.Size = 14
+    rep.Range("A2").Value = "First:  " & lbl1 & "!" & r1.Address(False, False)
+    rep.Range("A3").Value = "Second: " & lbl2 & "!" & r2.Address(False, False)
+    rep.Range("A4").Value = total & " difference(s) found" & IIf(total > nd, " (first " & nd & " listed)", "") & "  -  comparing " & IIf(useF, "formulas", "values")
+    rep.Range("A6:D6").Value = Array("First cell", "Second cell", "First value", "Second value")
+    With rep.Range("A6:D6")
+        .Font.Bold = True
+        .Interior.Color = RGB(31, 78, 121)
+        .Font.Color = RGB(255, 255, 255)
+    End With
+    For k = 1 To nd
+        rep.Cells(6 + k, 1).Value = diffs(k, 1)
+        rep.Cells(6 + k, 2).Value = diffs(k, 2)
+        rep.Cells(6 + k, 3).Value = "'" & CStr(diffs(k, 3))
+        rep.Cells(6 + k, 4).Value = "'" & CStr(diffs(k, 4))
+        If r1.Worksheet.Parent.Name = wb.Name And diffs(k, 1) <> "(outside)" Then
+            On Error Resume Next
+            rep.Hyperlinks.Add rep.Cells(6 + k, 1), "", "'" & r1.Worksheet.Name & "'!" & diffs(k, 1), , CStr(diffs(k, 1))
+            On Error GoTo bail
+        End If
+    Next k
+    rep.Columns("A:D").ColumnWidth = 26
+    rep.Activate
+    rep.Range("A1").Select
+    Application.Calculation = calc
+    Application.ScreenUpdating = True
+    Log_Add "Compare ranges", total & " differences" & IIf(doFill, ", " & cs.n & " cells coloured", "")
+    Exit Sub
+bail:
+    On Error Resume Next
+    Application.Calculation = calc
+    Application.ScreenUpdating = True
+    MsgBox "Compare stopped: " & Err.Description, vbExclamation, "SPED - Compare"
+End Sub
+
+'--------------------------------------------------------------------------
+' Compare columns: A not in B, B not in A, in both
+'--------------------------------------------------------------------------
+Private Sub CollectCol(ByVal r As Range, ByVal ignoreCase As Boolean, ByVal d As Object, ByVal firstKey As Object)
+    Dim arr As Variant
+    Dim i As Long
+    Dim k As String
+    Dim v As Variant
+    If r.CountLarge = 1 Then
+        ReDim arr(1 To 1, 1 To 1)
+        arr(1, 1) = r.Value
+    Else
+        arr = r.Value
+    End If
+    For i = 1 To UBound(arr, 1)
+        v = arr(i, 1)
+        If Not IsEmpty(v) Then
+            If Not IsError(v) Then
+                k = Norm(v, ignoreCase)
+                If Len(k) > 0 Then
+                    If d.Exists(k) Then
+                        d(k) = d(k) + 1
+                    Else
+                        d.Add k, 1
+                        firstKey.Add k, CStr(v)
+                    End If
+                End If
+            End If
+        End If
+    Next i
+End Sub
+
+Public Sub Cmp_Columns()
+    Dim ra As Range
+    Dim rb As Range
+    Dim ignoreCase As Boolean
+    Dim da As Object
+    Dim db As Object
+    Dim fa As Object
+    Dim fb As Object
+    Dim k As Variant
+    Dim ws As Worksheet
+    Dim nA As Long
+    Dim nB As Long
+    Dim nBoth As Long
+    Dim ra2 As Long
+    Dim rb2 As Long
+    Dim rc2 As Long
+    Dim hdr As Range
+
+    On Error GoTo bail
+    Set ra = PickRange("Select column A (the list to check). Include only the values, not the heading.", "SPED - Compare columns (1 of 2)", Selection.Address)
+    If ra Is Nothing Then Exit Sub
+    If ra.Columns.Count > 1 Or ra.Areas.Count > 1 Then
+        MsgBox "Please select a single column.", vbExclamation, "SPED - Compare columns"
+        Exit Sub
+    End If
+    Set rb = PickRange("Select column B (the list to compare against).", "SPED - Compare columns (2 of 2)", "")
+    If rb Is Nothing Then Exit Sub
+    If rb.Columns.Count > 1 Or rb.Areas.Count > 1 Then
+        MsgBox "Please select a single column.", vbExclamation, "SPED - Compare columns"
+        Exit Sub
+    End If
+    ' trim to used cells so whole-column picks are fast
+    Set ra = Intersect(ra, ra.Worksheet.UsedRange)
+    Set rb = Intersect(rb, rb.Worksheet.UsedRange)
+    If ra Is Nothing Or rb Is Nothing Then
+        MsgBox "One of the columns is empty.", vbInformation, "SPED - Compare columns"
+        Exit Sub
+    End If
+
+    ignoreCase = (MsgBox("Ignore capitals and extra spaces?", vbYesNo + vbQuestion, "SPED - Compare columns") = vbYes)
+
+    Set da = CreateObject("Scripting.Dictionary")
+    Set db = CreateObject("Scripting.Dictionary")
+    Set fa = CreateObject("Scripting.Dictionary")
+    Set fb = CreateObject("Scripting.Dictionary")
+    Application.ScreenUpdating = False
+    CollectCol ra, ignoreCase, da, fa
+    CollectCol rb, ignoreCase, db, fb
+
+    Set ws = SheetFor(ActiveWorkbook, "SPED Columns")
+    ws.Range("A1").Value = "SPED - Compare columns"
+    ws.Range("A1").Font.Bold = True
+    ws.Range("A1").Font.Size = 14
+    ws.Range("A2").Value = "A = " & ra.Worksheet.Name & "!" & ra.Address(False, False) & "     B = " & rb.Worksheet.Name & "!" & rb.Address(False, False)
+    ws.Range("A4:G4").Value = Array("In A, not in B", "Times in A", "", "In B, not in A", "Times in B", "", "In both")
+    With ws.Range("A4:G4")
+        .Font.Bold = True
+        .Interior.Color = RGB(31, 78, 121)
+        .Font.Color = RGB(255, 255, 255)
+    End With
+    ra2 = 5
+    rb2 = 5
+    rc2 = 5
+    For Each k In da.Keys
+        If db.Exists(k) Then
+            If rc2 <= 1048576 Then ws.Cells(rc2, 7).Value = "'" & fa(k): rc2 = rc2 + 1
+            nBoth = nBoth + 1
+        Else
+            If ra2 <= 1048576 Then
+                ws.Cells(ra2, 1).Value = "'" & fa(k)
+                ws.Cells(ra2, 2).Value = da(k)
+                ra2 = ra2 + 1
+            End If
+            nA = nA + 1
+        End If
+    Next k
+    For Each k In db.Keys
+        If Not da.Exists(k) Then
+            ws.Cells(rb2, 4).Value = "'" & fb(k)
+            ws.Cells(rb2, 5).Value = db(k)
+            rb2 = rb2 + 1
+            nB = nB + 1
+        End If
+    Next k
+    ws.Range("A3").Value = nA & " only in A,  " & nB & " only in B,  " & nBoth & " in both  (each distinct value counted once)"
+    ws.Columns("A:G").ColumnWidth = 22
+    ws.Columns("C").ColumnWidth = 4
+    ws.Columns("F").ColumnWidth = 4
+    ws.Activate
+    ws.Range("A1").Select
+    Application.ScreenUpdating = True
+    Log_Add "Compare columns", nA & " only in A, " & nB & " only in B, " & nBoth & " in both"
+    Exit Sub
+bail:
+    On Error Resume Next
+    Application.ScreenUpdating = True
+    MsgBox "Compare stopped: " & Err.Description, vbExclamation, "SPED - Compare columns"
+End Sub

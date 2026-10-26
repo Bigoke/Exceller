@@ -1,0 +1,750 @@
+Attribute VB_Name = "Excellerform"
+Attribute VB_Base = "0{3BDD9BF5-86B8-4C5E-8F4D-801F64D2AD6A}{A87BE948-F711-4317-AC3B-4BE3D832021E}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+Private mKeep As Collection
+Private mHover As Object
+Private mY As Single
+Private mW As Single
+Private mFilling As Boolean
+Private mPage As String
+Private WithEvents cboFmt As MSForms.ComboBox
+
+Private Sub UserForm_Initialize()
+    Dim i As Long
+    Set mKeep = New Collection
+    For i = 1 To 13
+        With Me.Controls("CommandButton" & i)
+            .Visible = False
+            .Left = 0
+            .Top = 0
+        End With
+    Next i
+    For i = 1 To 4
+        Me.Controls("Label" & i).Visible = False
+    Next i
+    mPage = g_PanelPage
+    Select Case mPage
+        Case "settings": BuildSettings
+        Case "tools2": BuildTools
+        Case "tools3": BuildTools3
+        Case "favsedit": BuildFavsEdit
+        Case "favs": BuildFavs
+        Case Else: BuildMain
+    End Select
+    If mPage = "favs" Then
+        UiDock Me, "center"
+    Else
+        UiDock Me, "right"
+    End If
+End Sub
+
+Private Sub BuildMain()
+    Dim needScroll As Boolean
+    needScroll = ((Application.Height - 60) < 600)
+    Me.Caption = "SPED"
+    UiStyleForm Me, 196, 560
+    mW = Me.InsideWidth - 24
+    If needScroll Then mW = mW - 16
+    UiHeader Me, "SPED", "Accounting toolkit", mKeep
+    mY = 52
+
+    AddSection Me.Controls("Label1"), "COPY"
+    AddBtn "selall", &H25A3, "Select all", "Act_SelectAll", "N"
+    AddBtn "selcopy", &H2750, "Select && copy", "Act_SelectCopy", "N"
+    AddBtn "copydown", &H2B07, "Copy down", "Act_CopyDown", "N"
+
+    AddSection Me.Controls.Add("Forms.Label.1", "uiSecFmt", True), "CELL FORMAT"
+    Set cboFmt = Me.Controls.Add("Forms.ComboBox.1", "cboFmt", True)
+    With cboFmt
+        .Left = 12: .Top = mY: .Width = mW: .Height = 22
+        .Style = 2
+        .BackColor = UI_CARD: .ForeColor = UI_TEXT
+        .BorderStyle = 1: .BorderColor = UI_BORDER: .SpecialEffect = 0
+        .Font.Name = UI_FONT: .Font.Size = 9
+    End With
+    mY = mY + 26
+    FillFormats
+    AddHalf "fmtsave", &H271A, "Save", "Act_FmtSave", 12
+    AddHalf "fmtundo", &H21B6, "Undo", "Act_FmtUndo", 12 + (mW - 6) / 2 + 6
+    mY = mY + 25
+
+    AddSection Me.Controls("Label2"), "EDITOR"
+    AddBtn "editor", &H270E, "Editor", "Act_Editor", "N"
+    AddBtn "newrow", &H271A, "New row", "Act_NewRow", "N"
+    AddBtn "delrow", &H2716, "Delete row", "Act_DeleteRow", "D"
+    AddBtn "done", &H2714, "Done", "Act_Done", "S"
+
+    AddSection Me.Controls("Label3"), "FIND"
+    AddBtn "find", &H2315, "Find all", "Act_Find", "N"
+
+    AddSection Me.Controls("Label4"), "TOOLS"
+    AddBtn "calendar", &H25A6, "Calendar", "Act_Calendar", "N"
+    AddBtn "delval", &H2297, "Delete rows by value", "Act_DeleteRowsByValue", "D"
+    AddBtn "sheets", &H2630, "Sheets", "Act_Sheets", "N"
+    AddBtn "copysheet", &H2750, "Copy sheet", "Act_CopySheet", "N"
+    AddBtn "summary", &H3A3, "Monthly summary", "Act_Summary", "P"
+
+    mY = mY + 6
+    AddBtn "more", &H2692, "Sheets && audit", "Act_More", "N"
+    AddBtn "data", &H25A4, "Data && files", "Act_Data", "N"
+    AddBtn "settings", &H2699, "Settings", "Act_Settings", "N"
+
+    UiFixHeight Me, mY + 8
+End Sub
+
+Private Sub BuildSettings()
+    Dim lb As Object
+    Me.Caption = "SPED settings"
+    UiStyleForm Me, 196, 300
+    mW = Me.InsideWidth - 24
+    UiHeader Me, "Settings", "Customise SPED", mKeep
+    mY = 52
+
+    AddSection Me.Controls.Add("Forms.Label.1", "uiSecTheme", True), "THEME"
+    AddBtn "themelight", &H2600, "Light", "Act_ThemeLight", IIf(UiIsDark(), "N", "P")
+    AddBtn "themedark", &H263E, "Dark", "Act_ThemeDark", IIf(UiIsDark(), "P", "N")
+
+    Set lb = Me.Controls.Add("Forms.Label.1", "uiHint", True)
+    With lb
+        .Left = 12: .Top = mY + 4: .Width = mW: .Height = 40
+        .WordWrap = True: .BackStyle = 0
+        .Caption = "Applies to this panel, Find all, Sheets and the calendar. Forms that are already open change when you reopen them."
+        .ForeColor = UI_MUTED: .Font.Name = UI_FONT: .Font.Size = 8
+    End With
+    UiPassive Me, lb, mKeep
+    mY = mY + 48
+
+    AddSection Me.Controls.Add("Forms.Label.1", "uiSecUpd", True), "VERSION AND UPDATES"
+    Set lb = Me.Controls.Add("Forms.Label.1", "uiVer", True)
+    With lb
+        .Left = 12: .Top = mY: .Width = mW: .Height = 16
+        .BackStyle = 0: .Caption = "SPED version " & SPED_VERSION
+        .ForeColor = UI_TEXT: .Font.Name = UI_FONT: .Font.Size = 9: .Font.Bold = True
+    End With
+    UiPassive Me, lb, mKeep
+    mY = mY + 20
+    AddBtn "chkupd", &H21BB, "Check for updates", "Act_CheckUpdate", "N"
+    AddBtn "autoupd", &H2699, "Check on start: " & IIf(Sped_GetSetting("AutoCheck", "0") = "1", "On", "Off"), "Act_AutoToggle", "N"
+    AddBtn "updsrc", &H2315, "Update location...", "Act_UpdateSrc", "N"
+
+    AddSection Me.Controls.Add("Forms.Label.1", "uiSecFav", True), "FAVOURITES BAR"
+    AddBtn "favedit", &H2605, "Choose favourites...", "Act_Favs", "N"
+    AddBtn "favbar", &H25A4, "Favourites bar: " & IIf(Fav_IsOn(), "On", "Off"), "Act_FavBarToggle", IIf(Fav_IsOn(), "P", "N")
+
+    AddSection Me.Controls.Add("Forms.Label.1", "uiSecSec", True), "PRIVACY"
+    AddBtn "forgetpw", &H2716, "Forget saved passwords", "Act_ForgetPw", "D"
+
+    mY = mY + 6
+    AddBtn "back", &H2190, "Back", "Act_Back", "N"
+    UiFixHeight Me, mY + 8
+End Sub
+
+Private Sub BuildTools3()
+    Me.Caption = "SPED data and files"
+    UiStyleForm Me, 196, 560
+    mW = Me.InsideWidth - 24
+    UiHeader Me, "Data && files", "Clean, compare and check", mKeep
+    mY = 52
+
+    AddSection Me.Controls.Add("Forms.Label.1", "uiSecClean", True), "CLEAN SELECTION"
+    AddBtn "tidy", &H2728, "Case and tidy", "Act_Tidy", "N"
+    AddBtn "dates", &H25A6, "Fix dates", "Act_FixDates", "N"
+    AddBtn "nums", &H23, "Fix numbers", "Act_FixNumbers", "N"
+
+    AddSection Me.Controls.Add("Forms.Label.1", "uiSecCmp", True), "COMPARE"
+    AddBtn "cmpr", &H2194, "Compare two ranges", "Act_CmpRanges", "N"
+    AddBtn "cmpc", &H2261, "Compare two columns", "Act_CmpCols", "N"
+
+    AddSection Me.Controls.Add("Forms.Label.1", "uiSecWb", True), "WORKBOOK"
+    AddBtn "inspect", &H2315, "Workbook inspector", "Act_Inspect", "N"
+    AddBtn "protect", &H25A0, "Protect all sheets", "Act_ProtectAll", "N"
+    AddBtn "unprotect", &H25A1, "Unprotect all sheets", "Act_UnprotectAll", "N"
+
+    AddSection Me.Controls.Add("Forms.Label.1", "uiSecHist", True), "HISTORY"
+    AddBtn "undo", &H21B6, "Undo last SPED change", "Act_Undo", "N"
+    AddBtn "runlog", &H2630, "Run log", "Act_RunLog", "N"
+
+    mY = mY + 6
+    AddBtn "back", &H2190, "Back", "Act_Back", "N"
+    UiFixHeight Me, mY + 8
+End Sub
+
+Private Sub BuildFavsEdit()
+    Dim allK As Variant
+    Dim i As Long
+    Dim g As Long
+    Dim cp As String
+    Dim ac As String
+    Dim k As String
+    Dim on1 As Boolean
+    Me.Caption = "SPED favourites"
+    UiStyleForm Me, 196, 560
+    mW = Me.InsideWidth - 24
+    UiHeader Me, "Favourites", "Tick what goes on the bar", mKeep
+    mY = 56
+    allK = Fav_AllKeys()
+    For i = LBound(allK) To UBound(allK)
+        k = CStr(allK(i))
+        If Fav_Info(k, g, cp, ac) Then
+            on1 = Fav_Has(k)
+            UiButton Me, Me, "fv_" & k, IIf(on1, &H2714, &H25CB), cp, "Act_FavToggle|" & k, 12, mY, mW, 22, "N", mKeep
+            If on1 Then Me.Controls("ui_fv_" & k).ForeColor = UI_SUCCESS
+            mY = mY + 25
+        End If
+    Next i
+    mY = mY + 6
+    AddBtn "back", &H2190, "Back to settings", "Act_Settings", "N"
+    UiFixHeight Me, mY + 8
+End Sub
+
+Private Sub BuildFavs()
+    Dim keys() As String
+    Dim i As Long
+    Dim n As Long
+    Dim x As Single
+    Dim g As Long
+    Dim cp As String
+    Dim ac As String
+    keys = Split(Fav_List(), ",")
+    For i = 0 To UBound(keys)
+        If Fav_Info(Trim$(keys(i)), g, cp, ac) Then n = n + 1
+    Next i
+    Me.Caption = "SPED"
+    UiStyleForm Me, (n + 1) * 32 + 28, 80
+    x = 8
+    For i = 0 To UBound(keys)
+        If Fav_Info(Trim$(keys(i)), g, cp, ac) Then
+            UiIconButton Me, "fv" & Trim$(keys(i)), g, Replace(cp, "&&", "&"), ac, x, 6, 28, mKeep
+            x = x + 32
+        End If
+    Next i
+    UiIconButton Me, "fvedit", &H2699, "Edit favourites", "Act_FavEditFromBar", x, 6, 28, mKeep
+    UiFixHeight Me, 40
+End Sub
+
+Private Sub BuildTools()
+    Me.Caption = "SPED sheets and audit"
+    UiStyleForm Me, 196, 560
+    mW = Me.InsideWidth - 24
+    UiHeader Me, "Sheets && audit", "Sheet tools and checks", mKeep
+    mY = 52
+
+    AddSection Me.Controls.Add("Forms.Label.1", "uiSecSheets", True), "SHEETS"
+    AddHalf "sortaz", &H2193, "Sort A-Z", "Act_SortAZ", 12
+    AddHalf "sortza", &H2191, "Sort Z-A", "Act_SortZA", 12 + (mW - 6) / 2 + 6
+    mY = mY + 25
+    AddHalf "rename", &H270E, "Rename", "Act_Rename", 12
+    AddHalf "tabcol", &H25CF, "Colour", "Act_TabColour", 12 + (mW - 6) / 2 + 6
+    mY = mY + 25
+    AddBtn "hidesel", &H25CC, "Hide selected sheets", "Act_HideSel", "N"
+    AddBtn "hideoth", &H25CC, "Hide all but this one", "Act_HideOthers", "N"
+    AddBtn "hidename", &H25CC, "Hide by name...", "Act_HideName", "N"
+    AddBtn "unhidename", &H25C9, "Unhide by name...", "Act_UnhideName", "N"
+    AddBtn "unhideall", &H25C9, "Unhide all sheets", "Act_UnhideAll", "N"
+    AddBtn "toc", &H2630, "Make contents sheet", "Act_Contents", "P"
+
+    AddSection Me.Controls.Add("Forms.Label.1", "uiSecAudit", True), "AUDIT"
+    AddBtn "auall", &H2714, "Highlight all", "Act_AuAll", "N"
+    AddHalf "auf", &H3A3, "Formulas", "Act_AuF", 12
+    AddHalf "auh", &H23, "Hard-coded", "Act_AuH", 12 + (mW - 6) / 2 + 6
+    mY = mY + 25
+    AddHalf "aue", &H26A0, "Errors", "Act_AuE", 12
+    AddHalf "aun", &H2212, "Negatives", "Act_AuN", 12 + (mW - 6) / 2 + 6
+    mY = mY + 25
+    AddHalf "auclear", &H2716, "Clear", "Act_AuClear", 12
+    AddHalf "ausum", &H2630, "Summary", "Act_AuSum", 12 + (mW - 6) / 2 + 6
+    mY = mY + 25
+
+    mY = mY + 6
+    AddBtn "back", &H2190, "Back", "Act_Back", "N"
+    UiFixHeight Me, mY + 8
+End Sub
+
+Public Sub Act_More()
+    g_PanelPage = "tools2"
+    Reopen
+End Sub
+
+Public Sub Act_SortAZ()
+    Sh_Sort False
+End Sub
+
+Public Sub Act_SortZA()
+    Sh_Sort True
+End Sub
+
+Public Sub Act_Rename()
+    Sh_Rename
+End Sub
+
+Public Sub Act_TabColour()
+    Sh_TabColourPrompt
+End Sub
+
+Public Sub Act_HideSel()
+    Sh_HideSelected
+End Sub
+
+Public Sub Act_HideOthers()
+    Sh_HideOthers
+End Sub
+
+Public Sub Act_HideName()
+    Sh_HideMatch True
+End Sub
+
+Public Sub Act_UnhideName()
+    Sh_HideMatch False
+End Sub
+
+Public Sub Act_UnhideAll()
+    Sh_UnhideAll
+End Sub
+
+Public Sub Act_Contents()
+    Sh_Contents
+End Sub
+
+Public Sub Act_AuAll()
+    Au_Run "all", False
+End Sub
+
+Public Sub Act_AuF()
+    Au_Run "formulas", False
+End Sub
+
+Public Sub Act_AuH()
+    Au_Run "hard", False
+End Sub
+
+Public Sub Act_AuE()
+    Au_Run "errors", False
+End Sub
+
+Public Sub Act_AuN()
+    Au_Run "neg", False
+End Sub
+
+Public Sub Act_AuClear()
+    Au_Clear
+End Sub
+
+Public Sub Act_AuSum()
+    Au_Summary
+End Sub
+
+Private Sub AddSection(ByVal lbl As Object, ByVal cap As String)
+    mY = mY + 6
+    UiSection lbl, cap, 12, mY, mW
+    UiPassive Me, lbl, mKeep
+    mY = mY + 15
+End Sub
+
+Private Sub AddBtn(ByVal key As String, ByVal glyph As Long, ByVal cap As String, ByVal action As String, ByVal kind As String)
+    UiButton Me, Me, key, glyph, cap, action, 12, mY, mW, 22, kind, mKeep
+    mY = mY + 25
+End Sub
+
+Private Sub AddHalf(ByVal key As String, ByVal glyph As Long, ByVal cap As String, ByVal action As String, ByVal x As Single)
+    UiButton Me, Me, key, glyph, cap, action, x, mY, (mW - 6) / 2, 22, "N", mKeep
+End Sub
+
+Private Sub FillFormats()
+    Dim names As Variant
+    Dim i As Long
+    Dim cur As String
+    If cboFmt Is Nothing Then Exit Sub
+    mFilling = True
+    cboFmt.Clear
+    cboFmt.AddItem "(not applying)"
+    names = Cf_FormatNames()
+    If Not IsEmpty(names) Then
+        For i = LBound(names) To UBound(names)
+            cboFmt.AddItem CStr(names(i))
+        Next i
+    End If
+    cboFmt.ListIndex = 0
+    cur = Cf_ActiveName()
+    If Len(cur) > 0 Then
+        For i = 1 To cboFmt.ListCount - 1
+            If StrComp(cboFmt.List(i), cur, vbTextCompare) = 0 Then cboFmt.ListIndex = i
+        Next i
+    End If
+    mFilling = False
+End Sub
+
+Private Sub cboFmt_Change()
+    If mFilling Then Exit Sub
+    If cboFmt.ListIndex <= 0 Then
+        Cf_Stop
+    Else
+        Cf_PickByName cboFmt.List(cboFmt.ListIndex)
+    End If
+End Sub
+
+Public Sub Act_FmtSave()
+    Cf_Save
+    FillFormats
+End Sub
+
+Public Sub Act_FmtUndo()
+    Cf_Undo
+End Sub
+
+Public Sub Act_Settings()
+    g_PanelPage = "settings"
+    Reopen
+End Sub
+
+Public Sub Act_Back()
+    g_PanelPage = "main"
+    Reopen
+End Sub
+
+Public Sub Act_ThemeLight()
+    UiSetTheme False
+    g_PanelPage = "settings"
+    Reopen
+End Sub
+
+Public Sub Act_ThemeDark()
+    UiSetTheme True
+    g_PanelPage = "settings"
+    Reopen
+End Sub
+
+Public Sub Act_Data()
+    g_PanelPage = "tools3"
+    Reopen
+End Sub
+
+Public Sub Act_Tidy()
+    Cl_Tidy
+End Sub
+
+Public Sub Act_FixDates()
+    Cl_FixDates
+End Sub
+
+Public Sub Act_FixNumbers()
+    Cl_FixNumbers
+End Sub
+
+Public Sub Act_CmpRanges()
+    Cmp_Ranges
+End Sub
+
+Public Sub Act_CmpCols()
+    Cmp_Columns
+End Sub
+
+Public Sub Act_Inspect()
+    Insp_Run
+End Sub
+
+Public Sub Act_ProtectAll()
+    Pr_ProtectAll
+End Sub
+
+Public Sub Act_UnprotectAll()
+    Pr_UnprotectAll
+End Sub
+
+Public Sub Act_Undo()
+    Undo_Last
+End Sub
+
+Public Sub Act_RunLog()
+    Log_Show
+End Sub
+
+Public Sub Act_CheckUpdate()
+    Sped_CheckUpdate False
+End Sub
+
+Public Sub Act_UpdateSrc()
+    Sped_ChangeSource
+End Sub
+
+Public Sub Act_AutoToggle()
+    Sped_SetSetting "AutoCheck", IIf(Sped_GetSetting("AutoCheck", "0") = "1", "0", "1")
+    g_PanelPage = "settings"
+    Reopen
+End Sub
+
+Public Sub Act_Favs()
+    g_PanelPage = "favsedit"
+    Reopen
+End Sub
+
+Public Sub Act_FavEditFromBar()
+    Sped_ShowPanel "favsedit"
+End Sub
+
+Public Sub Act_FavBarToggle()
+    If Fav_IsOn() Then
+        Fav_Off
+    Else
+        Fav_Show
+    End If
+    g_PanelPage = "settings"
+    Reopen
+End Sub
+
+Public Sub Act_FavToggle(ByVal key As String)
+    Dim on1 As Boolean
+    on1 = Fav_Toggle(key)
+    On Error Resume Next
+    With Me.Controls("ui_fv_" & key)
+        .Caption = ChrW(IIf(on1, &H2714, &H25CB))
+        .ForeColor = IIf(on1, UI_SUCCESS, UI_ACCENT)
+    End With
+    On Error GoTo 0
+    If Fav_IsOn() Then Fav_Show
+End Sub
+
+Public Sub Act_ForgetPw()
+    Pr_Forget
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    If mPage = "favs" Then Fav_Closed CloseMode
+End Sub
+
+Private Sub Reopen()
+    On Error Resume Next
+    Application.OnTime Now, "'" & ThisWorkbook.Name & "'!Sped_ReopenPanel"
+    Unload Me
+End Sub
+
+Public Sub SetHover(ByVal h As Object)
+    If Not mHover Is Nothing Then
+        If mHover Is h Then Exit Sub
+        If Not (mHover.Surface Is h.Surface) Then mHover.ApplyHover False
+    End If
+    Set mHover = h
+    h.ApplyHover True
+End Sub
+
+Public Sub ClearHover()
+    If Not mHover Is Nothing Then
+        mHover.ApplyHover False
+        Set mHover = Nothing
+    End If
+End Sub
+
+Private Sub UserForm_MouseMove(ByVal Button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+    ClearHover
+End Sub
+
+Private Sub UserForm_Terminate()
+    Set mHover = Nothing
+    Set mKeep = Nothing
+    Set cboFmt = Nothing
+End Sub
+
+Public Sub Act_SelectAll()
+
+' Selectall Macro
+'
+
+'
+    Cells.Select
+    
+End Sub
+
+Public Sub Act_DeleteRowsByValue()
+
+
+    Dim rng As Range
+    Dim cell As Range
+    Dim searchValue As String
+    Dim delRange As Range
+    
+    ' Check that a range is selected
+    If TypeName(Selection) <> "Range" Then
+        MsgBox "Please select a range first.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Ask the user what value to look for
+    searchValue = InputBox("Enter the value to delete rows for." & vbCrLf & _
+                           "Leave blank to delete rows with empty cells:", _
+                           "Delete Rows by Value")
+    
+    ' If user clicks Cancel, exit
+    If searchValue = "" Then
+        If MsgBox("You entered nothing. This will delete rows with empty cells. Continue?", vbYesNo + vbExclamation) = vbNo Then Exit Sub
+    End If
+    
+    ' Loop through the selected range
+    Set rng = Intersect(Selection, ActiveSheet.UsedRange)
+    If rng Is Nothing Then
+        MsgBox "No matching cells found in selection.", vbInformation
+        Exit Sub
+    End If
+    For Each cell In rng
+        If IsError(cell.Value) Then
+            ' skip error cells
+        ElseIf (searchValue <> "" And CStr(cell.Value) = searchValue) Or (searchValue = "" And IsEmpty(cell.Value)) Then
+            If delRange Is Nothing Then
+                Set delRange = cell
+            Else
+                Set delRange = Union(delRange, cell)
+            End If
+        End If
+    Next cell
+    
+    ' Delete all matching rows
+    If Not delRange Is Nothing Then
+        delRange.EntireRow.Delete
+        If searchValue = "" Then
+            MsgBox "Rows with empty cells have been deleted.", vbInformation
+        Else
+            MsgBox "Rows with value '" & searchValue & "' have been deleted.", vbInformation
+        End If
+    Else
+        MsgBox "No matching cells found in selection.", vbInformation
+    End If
+
+
+
+End Sub
+
+
+Public Sub Act_Sheets()
+
+    Navigation.Show vbModeless
+
+End Sub
+
+Public Sub Act_CopySheet()
+Dim ws As Worksheet
+    Dim newName As String
+    Dim nameExists As Boolean
+    Dim sh As Worksheet
+    
+    Set ws = ActiveSheet
+    
+    ' Ask user for sheet name
+    newName = InputBox("Enter the name for the new sheet:", "New Sheet Name")
+    
+    ' If user cancels or leaves blank
+    If Trim(newName) = "" Then
+        MsgBox "Operation cancelled.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Check if name already exists
+    nameExists = False
+    For Each sh In ThisWorkbook.Worksheets
+        If LCase(sh.Name) = LCase(newName) Then
+            nameExists = True
+            Exit For
+        End If
+    Next sh
+    
+    If nameExists Then
+        MsgBox "A sheet with this name already exists.", vbCritical
+        Exit Sub
+    End If
+    
+    ' Copy sheet after current sheet
+    ws.Copy After:=ws
+    
+    ' Rename the copied sheet
+    ActiveSheet.Name = newName
+    
+    MsgBox "Sheet created successfully!", vbInformation
+
+End Sub
+
+Public Sub Act_Summary()
+    GenerateMonthlySummary
+End Sub
+
+Public Sub Act_SelectCopy()
+' Selectallcopy Macro
+'
+
+'
+    Cells.Select
+    Selection.Copy
+End Sub
+
+Public Sub Act_CopyDown()
+' Copydown Macro
+'
+
+'
+    ActiveCell.Resize(1000, 1).Select
+    Selection.Copy
+End Sub
+
+Public Sub Act_Editor()
+' Editor Macro
+'
+
+'
+    If MsgBox("Do you want to link, add or delete accounts?", vbYesNo) = vbNo Then Exit Sub
+    'MsgBox "Select a Cell in Row B", vbYesNo
+    Columns("B:B").EntireColumn.Hidden = False
+    
+End Sub
+
+Public Sub Act_NewRow()
+' NewRow Macro
+'
+
+'
+    If MsgBox("Do you want to add a new row?", vbYesNo) = vbNo Then Exit Sub
+    Selection.EntireRow.Insert , CopyOrigin:=xlFormatFromLeftOrAbove
+    If MsgBox("Do you want to link a account as well?", vbYesNo) = vbNo Then Exit Sub
+    ActiveCell.Worksheet.Cells(ActiveCell.Row - 1, 1).EntireRow.Select
+    Selection.Copy
+    ActiveCell.Worksheet.Cells(ActiveCell.Row + 1, 1).EntireRow.Select
+    ActiveSheet.Paste
+    Application.CutCopyMode = False
+End Sub
+Public Sub insertRowBelow()
+    If MsgBox("Do you want to add a new row?", vbYesNo) = vbNo Then Exit Sub
+    ActiveCell.Offset(1).EntireRow.Insert Shift:=xlDown, CopyOrigin:=xlFormatFromRightOrAbove
+    ActiveCell.EntireRow.Copy
+    ActiveCell.Offset(1).EntireRow.PasteSpecial xlPasteFormats
+    Application.CutCopyMode = False
+End Sub
+
+Public Sub Act_DeleteRow()
+' DeleteRow Macro
+'
+
+'
+    If MsgBox("Do you want to delete the current row?", vbYesNo) = vbNo Then Exit Sub
+    Selection.EntireRow.Delete
+End Sub
+
+Public Sub Act_Done()
+' Done Macro
+'
+
+'
+    Columns("B:B").EntireColumn.Hidden = True
+    
+End Sub
+
+Public Sub Act_Find()
+f_FindAll.Show vbModeless
+End Sub
+
+Public Sub Act_Calendar()
+    AdvancedCalendars
+End Sub
+
+Private Sub UserForm_Activate()
+FillFormats
+End Sub

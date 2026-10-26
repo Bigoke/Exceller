@@ -1,0 +1,24 @@
+Attribute VB_Name = "ThisWorkbook"
+Attribute VB_Base = "0{00020819-0000-0000-C000-000000000046}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = True
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = True
+
+Private WithEvents App As Excel.Application
+
+Private Sub Workbook_Open()
+    Set App = Excel.Application
+    On Error Resume Next
+    Application.OnTime Now + TimeSerial(0, 0, 3), "'" & ThisWorkbook.Name & "'!Sped_Startup"
+End Sub
+
+Private Sub App_SheetSelectionChange(ByVal Sh As Object, ByVal Target As Range)
+    Cf_OnSelection Target
+End Sub
+
+Private Sub Workbook_BeforeClose(Cancel As Boolean)
+    Cf_Stop
+End Sub

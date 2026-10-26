@@ -1,0 +1,201 @@
+Attribute VB_Name = "f_FindAll"
+Attribute VB_Base = "0{C9183998-E312-4196-91D7-47EBC279720C}{6607F96B-2611-4685-89D0-038F82F11550}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+
+
+
+'------------------------     ExcelCampus.com     ------------------------
+'Find All User Form
+'
+'by Jon Acampora, jon@excelcampus.com
+'
+'Description: The form uses the the FindAll function by Chip Pearson
+'             to find and return results to a listbox as the user types.
+'             The user can click on a result to go to the cell listed in
+'             the results.
+'
+'Date: 03/19/2013
+'
+'-------------------------------------------------------------------------
+
+Private mKeep As Collection
+Private mHover As Object
+
+Private Sub UserForm_Initialize()
+    Dim w As Single, y As Single, lb As Object
+    Set mKeep = New Collection
+    Me.Caption = "Find all"
+    UiStyleForm Me, 300, 440
+    UiHeader Me, "Find all", "Search the active sheet as you type", mKeep
+    w = Me.InsideWidth - 24
+    Me.CommandButton_Close.Visible = False
+
+    y = 56
+    UiSection Me.Controls.Add("Forms.Label.1", "uiSecSearch", True), "SEARCH", 12, y, w
+    y = y + 15
+    With Me.TextBox_Find
+        .Left = 12: .Top = y: .Width = w - 26: .Height = 26
+        .BorderStyle = 1: .BorderColor = UI_BORDER: .SpecialEffect = 0
+        .BackColor = UI_CARD: .ForeColor = UI_TEXT
+        .Font.Name = UI_FONT: .Font.Size = 11
+    End With
+    With Me.Label_ClearFind
+        .Left = 12 + w - 22: .Top = y + 4: .Width = 20: .Height = 18
+        .ZOrder 0
+    End With
+    y = y + 36
+
+    UiSection Me.Label2, "RESULTS", 12, y, w - 80
+    Set lb = Me.Controls.Add("Forms.Label.1", "uiCount", True)
+    With lb
+        .Left = 12 + w - 80: .Top = y: .Width = 80: .Height = 12
+        .BackStyle = 0: .TextAlign = 3: .Caption = ""
+        .ForeColor = UI_ACCENT: .Font.Name = UI_FONT: .Font.Size = 8: .Font.Bold = True
+    End With
+    UiPassive Me, Me.Label2, mKeep
+    UiPassive Me, lb, mKeep
+    y = y + 16
+
+    With Me.ListBox_Results
+        .Left = 12: .Top = y: .Width = w: .Height = Me.InsideHeight - y - 50
+        .ColumnCount = 2
+        .ColumnWidths = CStr(Int(w - 80)) & " pt;70 pt"
+        .BorderStyle = 1: .BorderColor = UI_BORDER: .SpecialEffect = 0
+        .BackColor = UI_CARD: .ForeColor = UI_TEXT
+        .Font.Name = UI_FONT: .Font.Size = 9
+    End With
+    UiButton Me, Me, "close", &H2716, "Close", "Act_Close", 12, Me.InsideHeight - 36, w, 26, "N", mKeep
+    UiDock Me, "right"
+End Sub
+
+Public Sub SetHover(ByVal h As Object)
+    If Not mHover Is Nothing Then
+        If mHover Is h Then Exit Sub
+        If Not (mHover.Surface Is h.Surface) Then mHover.ApplyHover False
+    End If
+    Set mHover = h
+    h.ApplyHover True
+End Sub
+
+Public Sub ClearHover()
+    If Not mHover Is Nothing Then
+        mHover.ApplyHover False
+        Set mHover = Nothing
+    End If
+End Sub
+
+Private Sub UserForm_MouseMove(ByVal Button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+    ClearHover
+End Sub
+
+Private Sub UserForm_Terminate()
+    Set mHover = Nothing
+    Set mKeep = Nothing
+End Sub
+
+
+Private Sub TextBox_Find_KeyUp(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+'Calls the FindAllMatches routine as user types text in the textbox
+
+    Call FindAllMatches
+    
+End Sub
+
+Private Sub Label_ClearFind_Click()
+'Clears the find text box and sets focus
+
+    Me.TextBox_Find.Text = ""
+    FindAllMatches
+    Me.TextBox_Find.SetFocus
+    
+End Sub
+
+Sub FindAllMatches()
+'Find all matches on activesheet
+'Called by: TextBox_Find_KeyUp event
+
+Dim SearchRange As Range
+Dim FindWhat As Variant
+Dim FoundCells As Range
+Dim FoundCell As Range
+Dim arrResults() As Variant
+Dim lFound As Long
+Dim lSearchCol As Long
+Dim lLastRow As Long
+   
+    If Len(f_FindAll.TextBox_Find.value) > 1 Then 'Do search if text in find box is longer than 1 character.
+        
+        Set SearchRange = ActiveSheet.UsedRange.Cells
+        
+        FindWhat = f_FindAll.TextBox_Find.value
+        'Calls the FindAll function
+        Set FoundCells = FindAll(SearchRange:=SearchRange, _
+                                FindWhat:=FindWhat, _
+                                LookIn:=xlValues, _
+                                LookAt:=xlPart, _
+                                SearchOrder:=xlByColumns, _
+                                MatchCase:=False, _
+                                BeginsWith:=vbNullString, _
+                                EndsWith:=vbNullString, _
+                                BeginEndCompare:=vbTextCompare)
+        If FoundCells Is Nothing Then
+            ReDim arrResults(1 To 1, 1 To 2)
+            arrResults(1, 1) = "No Results"
+        Else
+            'Add results of FindAll to an array
+            ReDim arrResults(1 To FoundCells.Count, 1 To 2)
+            lFound = 1
+            For Each FoundCell In FoundCells
+                arrResults(lFound, 1) = FoundCell.value
+                arrResults(lFound, 2) = FoundCell.Address
+                lFound = lFound + 1
+            Next FoundCell
+        End If
+        
+        'Populate the listbox with the array
+        Me.ListBox_Results.List = arrResults
+        If FoundCells Is Nothing Then
+            Me.Controls("uiCount").Caption = "0 found"
+        Else
+            Me.Controls("uiCount").Caption = FoundCells.Count & " found"
+        End If
+        
+    Else
+        Me.ListBox_Results.Clear
+        Me.Controls("uiCount").Caption = ""
+    End If
+        
+End Sub
+
+Private Sub ListBox_Results_Click()
+'Go to selection on sheet when result is clicked
+
+Dim strAddress As String
+Dim l As Long
+
+    For l = 0 To ListBox_Results.ListCount - 1
+        If ListBox_Results.Selected(l) = True Then
+            strAddress = CStr(ListBox_Results.List(l, 1))
+            If Len(strAddress) > 0 Then ActiveSheet.Range(strAddress).Select
+            GoTo EndLoop
+        End If
+    Next l
+
+EndLoop:
+    
+End Sub
+
+Public Sub Act_Close()
+'Close the userform
+
+    Unload Me
+    
+End Sub
+Private Sub UserForm_Activate()
+Me.TextBox_Find.SetFocus
+End Sub

@@ -1,0 +1,171 @@
+Attribute VB_Name = "Navigation"
+Attribute VB_Base = "0{AB74B449-8FEC-45BF-AF49-FBF4C312A006}{4E1FF164-13A0-4490-8D12-5227FCFA5834}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = True
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+Option Explicit
+
+Private LabelEvents As Collection
+Private mKeep As Collection
+Private mHover As Object
+
+Private Sub UserForm_Initialize()
+    Set mKeep = New Collection
+    Me.Caption = "Sheets"
+    UiStyleForm Me, 210, 400
+    UiHeader Me, "Sheets", "Jump to any worksheet", mKeep
+    With Me.Frame1
+        .Left = 8: .Top = 54
+        .Width = Me.InsideWidth - 16
+        .Height = Me.InsideHeight - 54 - 44
+        .BackColor = UI_BG
+        .BorderStyle = 0
+        .SpecialEffect = 0
+    End With
+    UiButton Me, Me, "refresh", &H21BB, "Refresh list", "Act_Refresh", 8, Me.InsideHeight - 34, Me.InsideWidth - 16, 26, "N", mKeep
+    LoadSheetList
+    UiDock Me, "left"
+End Sub
+
+Private Sub UserForm_Activate()
+    HighlightActiveSheet
+End Sub
+
+' -------------------------
+' Refresh button
+' -------------------------
+Public Sub Act_Refresh()
+    LoadSheetList
+End Sub
+
+' -------------------------
+' Load or reload the sheet list
+' -------------------------
+Public Sub LoadSheetList()
+    Dim ws As Worksheet
+    Dim bg As MSForms.Label
+    Dim tx As MSForms.Label
+    Dim topPos As Single
+    Dim i As Long
+    Dim itemW As Single
+
+    Set mHover = Nothing
+
+    ' Clear existing labels
+    For i = Me.Frame1.Controls.Count To 1 Step -1
+        If TypeName(Me.Frame1.Controls(i)) = "Label" Then
+            Me.Frame1.Controls.Remove Me.Frame1.Controls(i).Name
+        End If
+    Next i
+
+    Set LabelEvents = New Collection
+    topPos = 2
+    itemW = Me.Frame1.InsideWidth - 20
+
+    ' Add items for visible sheets in the active workbook
+    For Each ws In ActiveWorkbook.Worksheets
+        If ws.Visible = xlSheetVisible Then
+            Set bg = Me.Frame1.Controls.Add("Forms.Label.1", "bg_" & ws.Index, True)
+            With bg
+                .Caption = ""
+                .Left = 2: .Top = topPos: .Width = itemW: .Height = 24
+                .Tag = ws.Name
+                .BackStyle = 1: .BorderStyle = 1: .SpecialEffect = 0
+                .BorderColor = UI_BORDER: .BackColor = UI_CARD
+            End With
+            Set tx = Me.Frame1.Controls.Add("Forms.Label.1", "lbl_" & ws.Index, True)
+            With tx
+                .Caption = ws.Name
+                .Left = 12: .Top = topPos + 5: .Width = itemW - 20: .Height = 15
+                .Tag = ws.Name
+                .BackStyle = 0: .TextAlign = 1: .WordWrap = False
+                .ForeColor = UI_TEXT
+                .Font.Name = UI_FONT: .Font.Size = 10
+            End With
+
+            HookItem bg, bg
+            HookItem tx, bg
+
+            topPos = topPos + 28
+        End If
+    Next ws
+
+    ' Scrollbar if needed
+    With Me.Frame1
+        .ScrollBars = fmScrollBarsVertical
+        .ScrollHeight = topPos + 5
+    End With
+
+    HighlightActiveSheet
+End Sub
+
+Private Sub HookItem(ByVal lbl As MSForms.Label, ByVal surf As MSForms.Label)
+    Dim ev As CLabelEvents
+    Set ev = New CLabelEvents
+    Set ev.HyperLabel = lbl
+    Set ev.ParentForm = Me
+    Set ev.Surface = surf
+    ev.Action = ""
+    ev.NormalBack = UI_CARD
+    ev.NormalBorder = UI_BORDER
+    ev.HoverBack = UI_HOVER
+    ev.HoverBorder = UI_ACCENT
+    LabelEvents.Add ev
+End Sub
+
+' -------------------------
+' Highlight the active sheet item
+' -------------------------
+Public Sub HighlightActiveSheet()
+    Dim ev As CLabelEvents
+    Dim i As Long
+    Dim actName As String
+    Dim isAct As Boolean
+    If LabelEvents Is Nothing Then Exit Sub
+    actName = ActiveSheet.Name
+
+    For i = 1 To LabelEvents.Count
+        Set ev = LabelEvents(i)
+        isAct = (ev.HyperLabel.Tag = actName)
+        If isAct Then
+            ev.NormalBack = UI_ACTIVE: ev.NormalBorder = UI_ACCENT: ev.HoverBack = UI_ACTIVE
+        Else
+            ev.NormalBack = UI_CARD: ev.NormalBorder = UI_BORDER: ev.HoverBack = UI_HOVER
+        End If
+        ev.Surface.BackColor = ev.NormalBack
+        ev.Surface.BorderColor = ev.NormalBorder
+        If Not (ev.HyperLabel Is ev.Surface) Then
+            ev.HyperLabel.ForeColor = IIf(isAct, UI_ACTIVE_TEXT, UI_TEXT)
+            ev.HyperLabel.Font.Bold = isAct
+        End If
+    Next i
+End Sub
+
+Public Sub SetHover(ByVal h As Object)
+    If Not mHover Is Nothing Then
+        If mHover Is h Then Exit Sub
+        If Not (mHover.Surface Is h.Surface) Then mHover.ApplyHover False
+    End If
+    Set mHover = h
+    h.ApplyHover True
+End Sub
+
+Public Sub ClearHover()
+    If Not mHover Is Nothing Then
+        mHover.ApplyHover False
+        Set mHover = Nothing
+    End If
+End Sub
+
+Private Sub UserForm_MouseMove(ByVal Button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+    ClearHover
+End Sub
+
+Private Sub UserForm_Terminate()
+    Set mHover = Nothing
+    Set mKeep = Nothing
+    Set LabelEvents = Nothing
+End Sub

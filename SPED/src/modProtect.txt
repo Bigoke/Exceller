@@ -1,0 +1,234 @@
+Attribute VB_Name = "modProtect"
+Option Explicit
+
+'==========================================================================
+' SPED - Protect / Unprotect all sheets, with an opt-in password memory.
+' NOTE: remembered passwords are only lightly scrambled, NOT securely
+' encrypted. Anyone with access to your Windows profile could recover them.
+'==========================================================================
+
+Private Const KEY As String = "SPED-memory-key-2024"
+
+Private Function PwPath() As String
+    PwPath = Environ$("APPDATA") & "\SPED\passwords.dat"
+End Function
+
+Private Function Scramble(ByVal s As String) As String
+    Dim i As Long
+    Dim out As String
+    Dim k As Long
+    For i = 1 To Len(s)
+        k = AscW(Mid$(s, i, 1)) Xor AscW(Mid$(KEY, ((i - 1) Mod Len(KEY)) + 1, 1))
+        out = out & Right$("0000" & Hex$(k), 4)
+    Next i
+    Scramble = out
+End Function
+
+Private Function Unscramble(ByVal h As String) As String
+    Dim i As Long
+    Dim out As String
+    Dim k As Long
+    If Len(h) Mod 4 <> 0 Then Exit Function
+    For i = 1 To Len(h) \ 4
+        k = CLng("&H" & Mid$(h, (i - 1) * 4 + 1, 4)) Xor AscW(Mid$(KEY, ((i - 1) Mod Len(KEY)) + 1, 1))
+        out = out & ChrW(k)
+    Next i
+    Unscramble = out
+End Function
+
+Private Sub EnsureDir()
+    On Error Resume Next
+    MkDir Environ$("APPDATA") & "\SPED"
+End Sub
+
+Private Function LoadPw() As Collection
+    Dim c As New Collection
+    Dim f As Integer
+    Dim ln As String
+    Dim p As String
+    On Error Resume Next
+    f = FreeFile
+    Open PwPath For Input As #f
+    If Err.Number = 0 Then
+        Do While Not EOF(f)
+            Line Input #f, ln
+            ln = Trim$(ln)
+            If Len(ln) > 0 Then
+                p = Unscramble(ln)
+                If Len(p) > 0 Then c.Add p
+            End If
+        Loop
+        Close #f
+    End If
+    On Error GoTo 0
+    Set LoadPw = c
+End Function
+
+Private Sub SavePw(ByVal c As Collection)
+    Dim f As Integer
+    Dim i As Long
+    EnsureDir
+    On Error Resume Next
+    f = FreeFile
+    Open PwPath For Output As #f
+    For i = 1 To c.Count
+        Print #f, Scramble(CStr(c(i)))
+    Next i
+    Close #f
+End Sub
+
+Private Sub Remember(ByVal pw As String)
+    Dim c As Collection
+    Dim i As Long
+    Dim n As Collection
+    If Len(pw) = 0 Then Exit Sub
+    Set c = LoadPw()
+    For i = 1 To c.Count
+        If CStr(c(i)) = pw Then Exit Sub
+    Next i
+    Set n = New Collection
+    n.Add pw
+    For i = 1 To c.Count
+        If n.Count < 10 Then n.Add c(i)
+    Next i
+    SavePw n
+End Sub
+
+Public Sub Pr_Forget()
+    If MsgBox("Delete all passwords SPED has remembered on this PC?", vbYesNo + vbQuestion, "SPED - Protection") = vbNo Then Exit Sub
+    On Error Resume Next
+    Kill PwPath
+    On Error GoTo 0
+    Log_Add "Protection", "Saved passwords forgotten"
+    MsgBox "Saved passwords deleted.", vbInformation, "SPED - Protection"
+End Sub
+
+Private Function Targets(ByVal wb As Workbook, ByVal wantProtected As Boolean) As Collection
+    Dim c As New Collection
+    Dim ws As Worksheet
+    For Each ws In wb.Worksheets
+        If ws.ProtectContents = wantProtected Then c.Add ws
+    Next ws
+    Set Targets = c
+End Function
+
+Public Sub Pr_ProtectAll()
+    Dim wb As Workbook
+    Dim t As Collection
+    Dim saved As Collection
+    Dim ans As String
+    Dim pw As String
+    Dim i As Long
+    Dim ws As Worksheet
+    Dim msg As String
+    Dim ok As Long
+    Dim failed As Long
+    Dim keep As Boolean
+
+    Set wb = ActiveWorkbook
+    If wb Is Nothing Then Exit Sub
+    Set t = Targets(wb, False)
+    If t.Count = 0 Then
+        MsgBox "Every sheet in this workbook is already protected.", vbInformation, "SPED - Protection"
+        Exit Sub
+    End If
+    Set saved = LoadPw()
+    msg = "Protect " & t.Count & " sheet(s) in " & wb.Name & "." & vbCrLf & vbCrLf & "Type a password (leave empty for none)"
+    If saved.Count > 0 Then msg = msg & vbCrLf & "or type #1 to #" & saved.Count & " to use a remembered password."
+    ans = InputBox(msg, "SPED - Protect all sheets")
+    If StrPtr(ans) = 0 Then Exit Sub
+    If Left$(ans, 1) = "#" And IsNumeric(Mid$(ans, 2)) Then
+        i = CLng(Mid$(ans, 2))
+        If i < 1 Or i > saved.Count Then
+            MsgBox "There is no remembered password with that number.", vbExclamation, "SPED - Protection"
+            Exit Sub
+        End If
+        pw = CStr(saved(i))
+    Else
+        pw = ans
+        If Len(pw) > 0 Then
+            keep = (MsgBox("Remember this password on this PC so SPED can unprotect sheets later?" & vbCrLf & vbCrLf & "It is only lightly scrambled, NOT securely encrypted. Choose No on a shared computer.", vbYesNo + vbQuestion + vbDefaultButton2, "SPED - Protection") = vbYes)
+        End If
+    End If
+
+    For Each ws In t
+        On Error Resume Next
+        ws.Protect Password:=pw
+        If Err.Number = 0 Then ok = ok + 1 Else failed = failed + 1
+        Err.Clear
+        On Error GoTo 0
+    Next ws
+    If keep Then Remember pw
+    Log_Add "Protect all sheets", ok & " protected, " & failed & " failed" & IIf(Len(pw) = 0, " (no password)", " (with password)")
+    MsgBox ok & " sheet(s) protected." & IIf(failed > 0, vbCrLf & failed & " could not be protected.", ""), vbInformation, "SPED - Protection"
+End Sub
+
+Public Sub Pr_UnprotectAll()
+    Dim wb As Workbook
+    Dim t As Collection
+    Dim saved As Collection
+    Dim ws As Worksheet
+    Dim ans As String
+    Dim pw As String
+    Dim i As Long
+    Dim ok As Long
+    Dim stillLocked As Long
+    Dim done As Boolean
+    Dim msg As String
+    Dim keep As Boolean
+    Dim typed As Boolean
+
+    Set wb = ActiveWorkbook
+    If wb Is Nothing Then Exit Sub
+    Set t = Targets(wb, True)
+    If t.Count = 0 Then
+        MsgBox "No sheets in this workbook are protected.", vbInformation, "SPED - Protection"
+        Exit Sub
+    End If
+    Set saved = LoadPw()
+
+    ' 1) try no password, then every remembered password, silently
+    For Each ws In t
+        done = False
+        On Error Resume Next
+        ws.Unprotect ""
+        If Not ws.ProtectContents Then done = True
+        If Not done Then
+            For i = 1 To saved.Count
+                ws.Unprotect CStr(saved(i))
+                If Not ws.ProtectContents Then
+                    done = True
+                    Exit For
+                End If
+            Next i
+        End If
+        On Error GoTo 0
+        If done Then ok = ok + 1
+    Next ws
+
+    ' 2) ask once for a password for any that are still locked
+    stillLocked = t.Count - ok
+    If stillLocked > 0 Then
+        ans = InputBox(stillLocked & " sheet(s) are still protected." & vbCrLf & "Type the password to try on all of them:", "SPED - Unprotect all sheets")
+        If StrPtr(ans) <> 0 And Len(ans) > 0 Then
+            typed = True
+            For Each ws In t
+                If ws.ProtectContents Then
+                    On Error Resume Next
+                    ws.Unprotect ans
+                    On Error GoTo 0
+                    If Not ws.ProtectContents Then
+                        ok = ok + 1
+                        keep = True
+                    End If
+                End If
+            Next ws
+            If keep Then
+                If MsgBox("That password worked. Remember it on this PC?" & vbCrLf & vbCrLf & "It is only lightly scrambled, NOT securely encrypted.", vbYesNo + vbQuestion + vbDefaultButton2, "SPED - Protection") = vbYes Then Remember ans
+            End If
+        End If
+    End If
+    stillLocked = t.Count - ok
+    Log_Add "Unprotect all sheets", ok & " unprotected, " & stillLocked & " still protected"
+    MsgBox ok & " sheet(s) unprotected." & IIf(stillLocked > 0, vbCrLf & stillLocked & " are still protected (wrong password).", ""), IIf(stillLocked > 0, vbExclamation, vbInformation), "SPED - Protection"
+End Sub

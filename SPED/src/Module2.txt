@@ -1,0 +1,240 @@
+Attribute VB_Name = "Module2"
+Option Explicit
+
+Sub GenerateMonthlySummary()
+    Dim wsSrc As Worksheet
+    Dim wsSum As Worksheet
+    Dim lastRow As Long
+    Dim srcRow As Long
+    Dim outRow As Long
+    Dim monthStartRow As Long
+    
+    Dim dtVal As Variant
+    Dim dt As Date
+    Dim currMonthKey As String
+    Dim prevMonthKey As String
+    Dim currMonthName As String
+    Dim prevMonthName As String
+    
+    Dim colDate As Long, colDebit As Long, colCredit As Long, colBalance As Long
+    Dim headerRow As Long, c As Long
+    Dim cellVal As String
+    Dim lastCol As Long
+    
+    ' Set the currently active sheet as source
+    If TypeName(ActiveSheet) <> "Worksheet" Then
+        MsgBox "Please activate a worksheet first.", vbExclamation
+        Exit Sub
+    End If
+    Set wsSrc = ActiveSheet
+    If wsSrc.Name = "Summary" Then
+        MsgBox "Please run this on your data sheet, not on the Summary sheet.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Optimize performance during execution
+    On Error GoTo CleanFail
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.EnableEvents = False
+    
+    ' Check if "Summary" sheet exists; create or clear it
+    On Error Resume Next
+    Set wsSum = wsSrc.Parent.Worksheets("Summary")
+    On Error GoTo CleanFail
+    
+    If wsSum Is Nothing Then
+        Set wsSum = wsSrc.Parent.Worksheets.Add(After:=wsSrc)
+        wsSum.Name = "Summary"
+    Else
+        wsSum.Cells.Clear
+    End If
+    
+    ' Find the header row in the active sheet
+    lastRow = wsSrc.Cells(wsSrc.Rows.Count, 1).End(xlUp).Row
+    headerRow = 0
+    
+    For srcRow = 1 To 20
+        For c = 1 To 10
+            cellVal = LCase(Trim(CStr(wsSrc.Cells(srcRow, c).Text)))
+            If cellVal = "date" Or cellVal = "account date" Then
+                headerRow = srcRow
+                Exit For
+            End If
+        Next c
+        If headerRow > 0 Then Exit For
+    Next srcRow
+    
+    If headerRow = 0 Then headerRow = 1
+    
+    ' Dynamically locate key columns
+    colDate = 1
+    colDebit = 6
+    colCredit = 7
+    colBalance = 8
+    
+    lastCol = wsSrc.Cells(headerRow, wsSrc.Columns.Count).End(xlToLeft).Column
+    For c = 1 To lastCol
+        cellVal = LCase(Trim(CStr(wsSrc.Cells(headerRow, c).Text)))
+        If cellVal = "account date" Or cellVal = "date" Then colDate = c
+        If cellVal = "debit" Then colDebit = c
+        If cellVal = "credit" Then colCredit = c
+        If cellVal = "balance" Then colBalance = c
+    Next c
+    
+    ' Copy headers to Summary worksheet
+    wsSrc.Rows(headerRow).Copy Destination:=wsSum.Rows(1)
+    
+    ' Format Header Row
+    With wsSum.Rows(1)
+        .Font.Bold = True
+        .Interior.Color = RGB(220, 230, 242) ' Soft blue accent
+        .Borders(xlEdgeBottom).LineStyle = xlContinuous
+        .Borders(xlEdgeBottom).Weight = xlMedium
+    End With
+    
+    outRow = 2
+    monthStartRow = 2
+    prevMonthKey = ""
+    prevMonthName = ""
+    
+    ' Iterate through transaction rows
+    For srcRow = headerRow + 1 To lastRow
+        dtVal = wsSrc.Cells(srcRow, colDate).value
+        
+        ' Parse valid date rows
+        If TryParseDate(dtVal, dt) Then
+            currMonthKey = Format(dt, "yyyy-mm")
+            
+            ' Check if month changed -> Insert Monthly Subtotal
+            If prevMonthKey <> "" And currMonthKey <> prevMonthKey Then
+                outRow = AddMonthlySubtotal(wsSum, outRow, monthStartRow, outRow - 1, prevMonthName, colDebit, colCredit)
+                monthStartRow = outRow
+            End If
+            
+            ' Copy individual transaction row
+            wsSrc.Rows(srcRow).Copy Destination:=wsSum.Rows(outRow)
+            
+            prevMonthKey = currMonthKey
+            prevMonthName = Format(dt, "mmmm yyyy")
+            outRow = outRow + 1
+        End If
+    Next srcRow
+    
+    ' Insert Subtotal for the last month
+    If prevMonthKey <> "" Then
+        outRow = AddMonthlySubtotal(wsSum, outRow, monthStartRow, outRow - 1, prevMonthName, colDebit, colCredit)
+    End If
+    
+    ' Add Grand Total Row at the bottom
+    AddGrandTotal wsSum, outRow, 2, outRow - 1, colDebit, colCredit
+    
+    ' Apply Number / Currency Formatting (#,##0.00)
+    If colDebit > 0 Then wsSum.Columns(colDebit).NumberFormat = "#,##0.00"
+    If colCredit > 0 Then wsSum.Columns(colCredit).NumberFormat = "#,##0.00"
+    If colBalance > 0 Then wsSum.Columns(colBalance).NumberFormat = "#,##0.00"
+    
+    ' Auto-fit columns for optimal presentation
+    wsSum.Columns.AutoFit
+    
+    ' Restore application settings
+    Application.CutCopyMode = False
+    Application.Calculation = xlCalculationAutomatic
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+    
+    MsgBox "Monthly Summary created successfully!", vbInformation, "Completed"
+    Exit Sub
+
+CleanFail:
+    Dim errNum As Long, errDesc As String
+    errNum = Err.Number: errDesc = Err.Description
+    Application.CutCopyMode = False
+    Application.Calculation = xlCalculationAutomatic
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+    MsgBox "Could not create the summary (error " & errNum & "): " & errDesc, vbExclamation, "Monthly Summary"
+End Sub
+
+' Helper function to reliably parse dates (handles both Date objects and DD/MM/YYYY text strings)
+Private Function TryParseDate(ByVal val As Variant, ByRef dtOut As Date) As Boolean
+    Dim parts() As String
+    Dim sVal As String
+    
+    TryParseDate = False
+    If IsEmpty(val) Or IsNull(val) Then Exit Function
+    
+    If VarType(val) = vbDate Then
+        dtOut = CDate(val)
+        TryParseDate = True
+        Exit Function
+    End If
+    
+    sVal = Trim(CStr(val))
+    If IsDate(sVal) Then
+        parts = Split(sVal, "/")
+        If UBound(parts) = 2 Then
+            On Error Resume Next
+            dtOut = DateSerial(CInt(parts(2)), CInt(parts(1)), CInt(parts(0)))
+            If Err.Number = 0 Then
+                TryParseDate = True
+                Exit Function
+            End If
+            On Error GoTo 0
+        End If
+        dtOut = CDate(sVal)
+        TryParseDate = True
+        Exit Function
+    End If
+End Function
+
+' Helper function to build and format Monthly Subtotal row
+Private Function AddMonthlySubtotal(ws As Worksheet, ByVal rOut As Long, ByVal rStart As Long, ByVal rEnd As Long, ByVal mName As String, ByVal colD As Long, ByVal colC As Long) As Long
+    Dim colLetterD As String, colLetterC As String
+    
+    colLetterD = Split(ws.Cells(1, colD).Address, "$")(1)
+    colLetterC = Split(ws.Cells(1, colC).Address, "$")(1)
+    
+    ws.Cells(rOut, 1).value = "Total for " & mName
+    
+    ' Excel SUBTOTAL formulas (Type 9 = SUM)
+    ws.Cells(rOut, colD).Formula = "=SUBTOTAL(9, " & colLetterD & rStart & ":" & colLetterD & rEnd & ")"
+    ws.Cells(rOut, colC).Formula = "=SUBTOTAL(9, " & colLetterC & rStart & ":" & colLetterC & rEnd & ")"
+    
+    ' Style row with top/bottom continuous borders (month dividing lines)
+    With ws.Range(ws.Cells(rOut, 1), ws.Cells(rOut, 8))
+        .Font.Bold = True
+        .Interior.Color = RGB(242, 244, 247)
+        .Borders(xlEdgeTop).LineStyle = xlContinuous
+        .Borders(xlEdgeTop).Weight = xlThin
+        .Borders(xlEdgeBottom).LineStyle = xlContinuous
+        .Borders(xlEdgeBottom).Weight = xlThin
+    End With
+    
+    AddMonthlySubtotal = rOut + 1
+End Function
+
+' Helper function to build Grand Total row
+Private Sub AddGrandTotal(ws As Worksheet, ByVal rOut As Long, ByVal rStart As Long, ByVal rEnd As Long, ByVal colD As Long, ByVal colC As Long)
+    Dim colLetterD As String, colLetterC As String
+    
+    colLetterD = Split(ws.Cells(1, colD).Address, "$")(1)
+    colLetterC = Split(ws.Cells(1, colC).Address, "$")(1)
+    
+    ws.Cells(rOut, 1).value = "GRAND TOTAL"
+    
+    ' SUBTOTAL(9, ...) automatically skips nested SUBTOTAL rows above to prevent double counting
+    ws.Cells(rOut, colD).Formula = "=SUBTOTAL(9, " & colLetterD & rStart & ":" & colLetterD & rEnd & ")"
+    ws.Cells(rOut, colC).Formula = "=SUBTOTAL(9, " & colLetterC & rStart & ":" & colLetterC & rEnd & ")"
+    
+    ' Classic accounting double-underline formatting
+    With ws.Range(ws.Cells(rOut, 1), ws.Cells(rOut, 8))
+        .Font.Bold = True
+        .Interior.Color = RGB(220, 230, 242)
+        .Borders(xlEdgeTop).LineStyle = xlContinuous
+        .Borders(xlEdgeTop).Weight = xlThin
+        .Borders(xlEdgeBottom).LineStyle = xlDouble
+        .Borders(xlEdgeBottom).Weight = xlThick
+    End With
+End Sub
+

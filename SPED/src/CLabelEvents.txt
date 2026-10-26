@@ -1,0 +1,63 @@
+Attribute VB_Name = "CLabelEvents"
+Attribute VB_Base = "0{FCFB3D2A-A0FA-1068-A738-08002B3371B5}"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = False
+Attribute VB_Exposed = False
+Attribute VB_TemplateDerived = False
+Attribute VB_Customizable = False
+Option Explicit
+
+' Click / hover handler for label-based buttons and list items.
+' Action <> ""  : calls that public Sub on ParentForm when clicked.
+' Action = ""   : (Navigation form) activates the sheet named in Tag.
+
+Public WithEvents HyperLabel As MSForms.Label
+Attribute HyperLabel.VB_VarHelpID = -1
+Public ParentForm As Object
+Public Action As String
+Public Surface As MSForms.Label
+Public NormalBack As Long
+Public NormalBorder As Long
+Public HoverBack As Long
+Public HoverBorder As Long
+Public Passive As Boolean
+
+Public Sub ApplyHover(ByVal isOn As Boolean)
+    If Surface Is Nothing Then Exit Sub
+    On Error Resume Next
+    If isOn Then
+        Surface.BackColor = HoverBack
+        Surface.BorderColor = HoverBorder
+    Else
+        Surface.BackColor = NormalBack
+        Surface.BorderColor = NormalBorder
+    End If
+End Sub
+
+Private Sub HyperLabel_Click()
+    Dim p As Long
+    If Passive Then Exit Sub
+    If Len(Action) > 0 Then
+        p = InStr(Action, "|")
+        If p > 0 Then
+            CallByName ParentForm, Left$(Action, p - 1), VbMethod, Mid$(Action, p + 1)
+        Else
+            CallByName ParentForm, Action, VbMethod
+        End If
+    Else
+        On Error Resume Next
+        ActiveWorkbook.Worksheets(HyperLabel.Tag).Activate
+        On Error GoTo 0
+        If Not ParentForm Is Nothing Then ParentForm.HighlightActiveSheet
+    End If
+End Sub
+
+Private Sub HyperLabel_MouseMove(ByVal Button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+    If ParentForm Is Nothing Then Exit Sub
+    If Passive Then
+        ParentForm.ClearHover
+    Else
+        ParentForm.SetHover Me
+    End If
+End Sub

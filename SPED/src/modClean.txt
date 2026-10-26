@@ -1,0 +1,606 @@
+Attribute VB_Name = "modClean"
+Option Explicit
+
+'==========================================================================
+' SPED - Case and tidy, Fix dates, Fix numbers
+'==========================================================================
+
+Private Const MAX_CELLS As Double = 300000
+
+'--------------------------------------------------------------------------
+' Shared helpers
+'--------------------------------------------------------------------------
+' Text constants (not formulas) in the selection. A single cell means just that cell.
+Private Function TextCells() As Range
+    Dim rng As Range
+    Dim v As Variant
+
+    If TypeName(Selection) <> "Range" Then
+        MsgBox "Select some cells first.", vbExclamation, "SPED"
+        Exit Function
+    End If
+    Set rng = Selection
+    If rng.CountLarge = 1 Then
+        If Not rng.HasFormula Then
+            v = rng.Value
+            If VarType(v) = vbString Then Set TextCells = rng
+        End If
+    Else
+        On Error Resume Next
+        Set TextCells = rng.SpecialCells(xlCellTypeConstants, xlTextValues)
+        On Error GoTo 0
+    End If
+    If TextCells Is Nothing Then
+        MsgBox "There is no text in the selection to change.", vbInformation, "SPED"
+    ElseIf TextCells.CountLarge > MAX_CELLS Then
+        MsgBox "That is more than " & Format(MAX_CELLS, "#,##0") & " cells. Select a smaller range.", vbExclamation, "SPED"
+        Set TextCells = Nothing
+    End If
+End Function
+
+Private Function AreaArr(ByVal ar As Range) As Variant
+    Dim a() As Variant
+    If ar.CountLarge = 1 Then
+        ReDim a(1 To 1, 1 To 1)
+        a(1, 1) = ar.Value
+        AreaArr = a
+    Else
+        AreaArr = ar.Value
+    End If
+End Function
+
+Private Function Preview(ByRef cs As SpedChange, ByVal maxN As Long) As String
+    Dim i As Long
+    Dim s As String
+    Dim lim As Long
+    lim = cs.n
+    If lim > maxN Then lim = maxN
+    For i = 1 To lim
+        s = s & cs.addr(i) & ":  " & Left$(CStr(cs.oldVal(i)), 28) & "  ->  " & FormatNew(cs.newVal(i)) & vbCrLf
+    Next i
+    Preview = s
+End Function
+
+Private Function FormatNew(ByVal v As Variant) As String
+    If VarType(v) = vbDate Then
+        FormatNew = Format(v, "dd-mmm-yyyy")
+    Else
+        FormatNew = Left$(CStr(v), 28)
+    End If
+End Function
+
+Private Sub BeginWork(ByRef calc As Long)
+    calc = Application.Calculation
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+End Sub
+
+Private Sub EndWork(ByVal calc As Long)
+    Application.Calculation = calc
+    Application.ScreenUpdating = True
+End Sub
+
+'--------------------------------------------------------------------------
+' Case and tidy
+'--------------------------------------------------------------------------
+Private Function CleanChars(ByVal s As String) As String
+    Dim i As Long
+    s = Replace(s, vbCr, " ")
+    s = Replace(s, vbLf, " ")
+    s = Replace(s, vbTab, " ")
+    s = Replace(s, ChrW(160), " ")
+    s = Replace(s, ChrW(8203), "")
+    s = Replace(s, ChrW(8204), "")
+    s = Replace(s, ChrW(8205), "")
+    s = Replace(s, ChrW(65279), "")
+    s = Replace(s, ChrW(173), "")
+    For i = 0 To 31
+        s = Replace(s, Chr$(i), "")
+    Next i
+    s = Replace(s, Chr$(127), "")
+    CleanChars = Application.WorksheetFunction.Trim(s)
+End Function
+
+Public Sub Cl_Tidy()
+    Dim ans As String
+    Dim mode As Long
+    Dim doClean As Boolean
+    Dim tc As Range
+    Dim ar As Range
+    Dim arr As Variant
+    Dim i As Long
+    Dim j As Long
+    Dim s As String
+    Dim t As String
+    Dim cs As SpedChange
+    Dim ws As Worksheet
+    Dim c As Range
+    Dim calc As Long
+
+    ans = InputBox("Change the capitals of the selected text?" & vbCrLf & vbCrLf & "1 = Proper Case" & vbCrLf & "2 = UPPER CASE" & vbCrLf & "3 = lower case" & vbCrLf & "4 = Leave the capitals alone", "SPED - Case and tidy", "4")
+    If StrPtr(ans) = 0 Then Exit Sub
+    mode = Val(ans)
+    If mode < 1 Or mode > 4 Then
+        MsgBox "Please type 1, 2, 3 or 4.", vbExclamation, "SPED - Case and tidy"
+        Exit Sub
+    End If
+    doClean = (MsgBox("Also remove double spaces, spaces at the start and end, and non-printing characters?", vbYesNo + vbQuestion, "SPED - Case and tidy") = vbYes)
+    If mode = 4 And Not doClean Then Exit Sub
+
+    Set tc = TextCells()
+    If tc Is Nothing Then Exit Sub
+    Set ws = tc.Worksheet
+
+    For Each ar In tc.Areas
+        arr = AreaArr(ar)
+        For i = 1 To UBound(arr, 1)
+            For j = 1 To UBound(arr, 2)
+                If VarType(arr(i, j)) = vbString Then
+                    s = arr(i, j)
+                    t = s
+                    If doClean Then t = CleanChars(t)
+                    Select Case mode
+                        Case 1: t = StrConv(t, vbProperCase)
+                        Case 2: t = UCase$(t)
+                        Case 3: t = LCase$(t)
+                    End Select
+                    If t <> s Then Chg_Add cs, ar.Cells(i, j).Address(False, False), s, t, "", ""
+                End If
+            Next j
+        Next i
+    Next ar
+
+    If cs.n = 0 Then
+        MsgBox "Nothing needs changing.", vbInformation, "SPED - Case and tidy"
+        Exit Sub
+    End If
+    If MsgBox(cs.n & " cell(s) will change. Examples:" & vbCrLf & vbCrLf & Preview(cs, 8) & vbCrLf & "Apply now? (You can undo with SPED > Undo last SPED change.)", vbYesNo + vbQuestion, "SPED - Case and tidy") = vbNo Then Exit Sub
+
+    BeginWork calc
+    For i = 1 To cs.n
+        Set c = ws.Range(cs.addr(i))
+        WriteText c, CStr(cs.newVal(i))
+    Next i
+    EndWork calc
+    Undo_PushCells "Case and tidy (" & cs.n & " cells on " & ws.Name & ")", ws, cs
+    Log_Add "Case and tidy", cs.n & " cells changed (" & Choose(mode, "Proper", "UPPER", "lower", "case unchanged") & IIf(doClean, ", tidied", "") & ")"
+    Application.StatusBar = "SPED: " & cs.n & " cell(s) tidied."
+End Sub
+
+'--------------------------------------------------------------------------
+' Fix dates
+'--------------------------------------------------------------------------
+Private Function AllDigits(ByVal s As String) As Boolean
+    AllDigits = (Len(s) > 0) And Not (s Like "*[!0-9]*")
+End Function
+
+Private Function MakeDate(ByVal y As Long, ByVal m As Long, ByVal d As Long, ByRef out As Date) As Boolean
+    If m < 1 Or m > 12 Or d < 1 Or d > 31 Or y < 1900 Or y > 2200 Then Exit Function
+    out = DateSerial(y, m, d)
+    MakeDate = (Month(out) = m And Day(out) = d)
+End Function
+
+Public Function ParseDateText(ByVal s As String, ByVal dmy As Boolean, ByRef out As Date, ByRef amb As Boolean) As Boolean
+    Dim t As String
+    Dim p() As String
+    Dim a As Long
+    Dim b As Long
+    Dim c As Long
+    Dim y As Long
+    Dim m As Long
+    Dim d As Long
+    Dim datePart As String
+    Dim timePart As String
+    Dim sp As Long
+    Dim tv As Double
+    Dim dt As Date
+
+    amb = False
+    s = Trim$(Replace(s, ChrW(160), " "))
+    If Len(s) < 6 Or Len(s) > 30 Then Exit Function
+    If Not (s Like "*#*") Then Exit Function
+
+    ' split off a time part ("2025-03-04 10:15")
+    datePart = s
+    If InStr(s, ":") > 0 Then
+        sp = InStr(s, " ")
+        If sp = 0 Then Exit Function
+        datePart = Trim$(Left$(s, sp - 1))
+        timePart = Trim$(Mid$(s, sp + 1))
+        On Error Resume Next
+        tv = TimeValue(timePart)
+        If Err.Number <> 0 Then
+            Err.Clear
+            On Error GoTo 0
+            Exit Function
+        End If
+        On Error GoTo 0
+    End If
+
+    ' month names ("5 March 2025", "Mar 5, 2025")
+    If datePart Like "*[A-Za-z]*" Then
+        If Len(datePart) >= 8 Then
+            If IsDate(datePart) Then
+                dt = CDate(datePart)
+                out = DateValue(dt) + tv
+                ParseDateText = True
+            End If
+        End If
+        Exit Function
+    End If
+
+    ' 8 digits: yyyymmdd (then ddmmyyyy)
+    If datePart Like "########" Then
+        If MakeDate(CLng(Left$(datePart, 4)), CLng(Mid$(datePart, 5, 2)), CLng(Right$(datePart, 2)), dt) Then
+            out = dt + tv
+            ParseDateText = True
+        ElseIf MakeDate(CLng(Right$(datePart, 4)), CLng(Mid$(datePart, 3, 2)), CLng(Left$(datePart, 2)), dt) Then
+            out = dt + tv
+            ParseDateText = True
+            amb = True
+        End If
+        Exit Function
+    End If
+
+    t = Replace(Replace(Replace(datePart, "-", "/"), ".", "/"), " ", "/")
+    p = Split(t, "/")
+    If UBound(p) <> 2 Then Exit Function
+    If Not (AllDigits(p(0)) And AllDigits(p(1)) And AllDigits(p(2))) Then Exit Function
+    a = CLng(p(0))
+    b = CLng(p(1))
+    c = CLng(p(2))
+
+    If Len(p(0)) = 4 Then
+        If Not MakeDate(a, b, c, dt) Then Exit Function
+    Else
+        If Len(p(2)) = 2 Then
+            If c < 30 Then y = 2000 + c Else y = 1900 + c
+        ElseIf Len(p(2)) = 4 Then
+            y = c
+        Else
+            Exit Function
+        End If
+        If a > 12 And b <= 12 Then
+            d = a: m = b
+        ElseIf b > 12 And a <= 12 Then
+            d = b: m = a
+        ElseIf a <= 12 And b <= 12 Then
+            amb = (a <> b)
+            If dmy Then
+                d = a: m = b
+            Else
+                d = b: m = a
+            End If
+        Else
+            Exit Function
+        End If
+        If Not MakeDate(y, m, d, dt) Then Exit Function
+    End If
+    out = dt + tv
+    ParseDateText = True
+End Function
+
+Public Sub Cl_FixDates()
+    Dim ans As String
+    Dim mode As Long
+    Dim tc As Range
+    Dim ar As Range
+    Dim arr As Variant
+    Dim i As Long
+    Dim j As Long
+    Dim dt As Date
+    Dim nd As Date
+    Dim amb As Boolean
+    Dim nAmb As Long
+    Dim nSkip As Long
+    Dim cs As SpedChange
+    Dim ws As Worksheet
+    Dim c As Range
+    Dim calc As Long
+    Dim rng As Range
+    Dim nf As String
+    Dim v As Variant
+    Dim nfNew As String
+
+    ans = InputBox("Fix dates in the selected cells:" & vbCrLf & vbCrLf & "1 = Text to real dates (when unclear, read as day/month/year)" & vbCrLf & "2 = Text to real dates (when unclear, read as month/day/year)" & vbCrLf & "3 = Swap day and month on existing real dates" & vbCrLf & vbCrLf & "Dates like 25/03/2025 are always read correctly.", "SPED - Fix dates", "1")
+    If StrPtr(ans) = 0 Then Exit Sub
+    mode = Val(ans)
+    If mode < 1 Or mode > 3 Then
+        MsgBox "Please type 1, 2 or 3.", vbExclamation, "SPED - Fix dates"
+        Exit Sub
+    End If
+
+    If TypeName(Selection) <> "Range" Then
+        MsgBox "Select some cells first.", vbExclamation, "SPED"
+        Exit Sub
+    End If
+
+    If mode = 3 Then
+        Set rng = Selection
+        If rng.CountLarge > MAX_CELLS Then
+            MsgBox "Select a smaller range.", vbExclamation, "SPED"
+            Exit Sub
+        End If
+        Set ws = rng.Worksheet
+        For Each ar In rng.Areas
+            arr = AreaArr(ar)
+            For i = 1 To UBound(arr, 1)
+                For j = 1 To UBound(arr, 2)
+                    v = arr(i, j)
+                    If VarType(v) = vbDate Then
+                        Set c = ar.Cells(i, j)
+                        If Day(v) <= 12 And Day(v) <> Month(v) And Not c.HasFormula Then
+                            nd = DateSerial(Year(v), Day(v), Month(v)) + (v - DateValue(v))
+                            Chg_Add cs, c.Address(False, False), CDbl(v), CDbl(nd), CStr(c.NumberFormat), CStr(c.NumberFormat)
+                        End If
+                    End If
+                Next j
+            Next i
+        Next ar
+        If cs.n = 0 Then
+            MsgBox "No real dates with a day of 12 or less were found in the selection.", vbInformation, "SPED - Fix dates"
+            Exit Sub
+        End If
+        If MsgBox(cs.n & " date(s) will have day and month swapped. Examples:" & vbCrLf & vbCrLf & PreviewDates(cs, 8) & vbCrLf & "Apply now?", vbYesNo + vbQuestion, "SPED - Fix dates") = vbNo Then Exit Sub
+        BeginWork calc
+        For i = 1 To cs.n
+            ws.Range(cs.addr(i)).Value2 = cs.newVal(i)
+        Next i
+        EndWork calc
+        Undo_PushCells "Swap day/month (" & cs.n & " dates on " & ws.Name & ")", ws, cs
+        Log_Add "Fix dates", "Swapped day and month on " & cs.n & " dates"
+        Application.StatusBar = "SPED: " & cs.n & " date(s) swapped."
+        Exit Sub
+    End If
+
+    Set tc = TextCells()
+    If tc Is Nothing Then Exit Sub
+    Set ws = tc.Worksheet
+    For Each ar In tc.Areas
+        arr = AreaArr(ar)
+        For i = 1 To UBound(arr, 1)
+            For j = 1 To UBound(arr, 2)
+                If VarType(arr(i, j)) = vbString Then
+                    If ParseDateText(CStr(arr(i, j)), (mode = 1), dt, amb) Then
+                        Set c = ar.Cells(i, j)
+                        Chg_Add cs, c.Address(False, False), CStr(arr(i, j)), CDbl(dt), CStr(c.NumberFormat), ""
+                        If amb Then nAmb = nAmb + 1
+                    Else
+                        nSkip = nSkip + 1
+                    End If
+                End If
+            Next j
+        Next i
+    Next ar
+
+    If cs.n = 0 Then
+        MsgBox "No text dates were recognised in the selection.", vbInformation, "SPED - Fix dates"
+        Exit Sub
+    End If
+    If MsgBox(cs.n & " text date(s) will become real dates." & vbCrLf & nAmb & " of them were unclear (read as " & IIf(mode = 1, "day/month/year", "month/day/year") & ")." & vbCrLf & nSkip & " other text cell(s) were left alone." & vbCrLf & vbCrLf & "Examples:" & vbCrLf & PreviewDates(cs, 8) & vbCrLf & "Apply now?", vbYesNo + vbQuestion, "SPED - Fix dates") = vbNo Then Exit Sub
+
+    BeginWork calc
+    For i = 1 To cs.n
+        Set c = ws.Range(cs.addr(i))
+        nfNew = "dd-mmm-yyyy"
+        If cs.newVal(i) <> Int(cs.newVal(i)) Then nfNew = "dd-mmm-yyyy hh:nn"
+        c.NumberFormat = nfNew
+        c.Value2 = cs.newVal(i)
+        c.HorizontalAlignment = xlRight
+    Next i
+    EndWork calc
+    Undo_PushCells "Fix dates (" & cs.n & " cells on " & ws.Name & ")", ws, cs
+    Log_Add "Fix dates", cs.n & " text dates converted (" & nAmb & " unclear, read as " & IIf(mode = 1, "d/m/y", "m/d/y") & ")"
+    Application.StatusBar = "SPED: " & cs.n & " date(s) fixed."
+End Sub
+
+Private Function PreviewDates(ByRef cs As SpedChange, ByVal maxN As Long) As String
+    Dim i As Long
+    Dim s As String
+    Dim lim As Long
+    lim = cs.n
+    If lim > maxN Then lim = maxN
+    For i = 1 To lim
+        If VarType(cs.oldVal(i)) = vbString Then
+            s = s & cs.addr(i) & ":  " & Left$(CStr(cs.oldVal(i)), 24) & "  ->  " & Format(CDate(cs.newVal(i)), "dd-mmm-yyyy") & vbCrLf
+        Else
+            s = s & cs.addr(i) & ":  " & Format(CDate(cs.oldVal(i)), "dd-mmm-yyyy") & "  ->  " & Format(CDate(cs.newVal(i)), "dd-mmm-yyyy") & vbCrLf
+        End If
+    Next i
+    PreviewDates = s
+End Function
+
+'--------------------------------------------------------------------------
+' Fix numbers (text to numbers)
+'--------------------------------------------------------------------------
+Public Function ParseNumberText(ByVal s As String, ByVal decMode As Long, ByRef v As Double, ByRef isPct As Boolean, ByRef skipZero As Boolean) As Boolean
+    Dim t As String
+    Dim neg As Boolean
+    Dim commas As Long
+    Dim dots As Long
+    Dim dc As String
+    Dim ch As String
+    Dim sep As String
+    Dim ip As String
+    Dim fp As String
+    Dim p As Long
+    Dim k As Long
+    Dim parts() As String
+
+    isPct = False
+    skipZero = False
+    t = s
+    t = Replace(t, ChrW(160), "")
+    t = Replace(t, " ", "")
+    t = Replace(t, "'", "")
+    If Len(t) = 0 Or Len(t) > 40 Then Exit Function
+
+    If Left$(t, 1) = "(" And Right$(t, 1) = ")" Then
+        neg = True
+        t = Mid$(t, 2, Len(t) - 2)
+    End If
+    If Right$(t, 1) = "-" Then
+        neg = True
+        t = Left$(t, Len(t) - 1)
+    End If
+    If Left$(t, 1) = "-" Then
+        neg = True
+        t = Mid$(t, 2)
+    ElseIf Left$(t, 1) = "+" Then
+        t = Mid$(t, 2)
+    End If
+
+    ch = Left$(t, 1)
+    If ch = "R" Or ch = "r" Or ch = "$" Or ch = ChrW(8364) Or ch = ChrW(163) Or ch = ChrW(165) Then t = Mid$(t, 2)
+    If Left$(t, 1) = "-" Then
+        neg = True
+        t = Mid$(t, 2)
+    End If
+    If Right$(t, 1) = "%" Then
+        isPct = True
+        t = Left$(t, Len(t) - 1)
+    End If
+
+    If Len(t) = 0 Then Exit Function
+    If t Like "*[!0-9.,]*" Then Exit Function
+    If Not (t Like "*#*") Then Exit Function
+
+    commas = Len(t) - Len(Replace(t, ",", ""))
+    dots = Len(t) - Len(Replace(t, ".", ""))
+    If commas > 0 And dots > 0 Then
+        ' both present: the last one is the decimal mark
+        If decMode = 1 Then
+            dc = "."
+        ElseIf decMode = 2 Then
+            dc = ","
+        ElseIf InStrRev(t, ",") > InStrRev(t, ".") Then
+            dc = ","
+        Else
+            dc = "."
+        End If
+    ElseIf decMode = 1 Then
+        dc = "."
+    ElseIf decMode = 2 Then
+        dc = ","
+    ElseIf commas = 1 And dots = 0 Then
+        If Len(t) - InStr(t, ",") <= 2 Then dc = "," Else dc = ""
+    ElseIf dots = 1 And commas = 0 Then
+        dc = "."
+    Else
+        dc = ""
+    End If
+
+    If Len(dc) > 0 And InStr(t, dc) = 0 Then dc = ""
+    If Len(dc) > 0 Then
+        sep = IIf(dc = ".", ",", ".")
+        p = InStrRev(t, dc)
+        ip = Left$(t, p - 1)
+        fp = Mid$(t, p + 1)
+        If InStr(fp, ",") > 0 Or InStr(fp, ".") > 0 Then Exit Function
+    Else
+        If commas > 0 And dots > 0 Then Exit Function
+        sep = IIf(commas > 0, ",", ".")
+        ip = t
+        fp = ""
+        ' long digit strings with no separators are IDs / account numbers
+        If commas + dots = 0 And Len(t) >= 12 Then
+            skipZero = True
+            Exit Function
+        End If
+    End If
+    If InStr(ip, IIf(sep = ",", ".", ",")) > 0 Then Exit Function
+    If InStr(ip, sep) > 0 Then
+        parts = Split(ip, sep)
+        If Len(parts(0)) < 1 Or Len(parts(0)) > 3 Then Exit Function
+        For k = 1 To UBound(parts)
+            If Len(parts(k)) <> 3 Then Exit Function
+        Next k
+    End If
+    t = Replace(ip, sep, "")
+    If Len(fp) > 0 Then t = t & "." & fp
+    If Len(t) = 0 Then Exit Function
+    If Left$(t, 1) = "." Then t = "0" & t
+
+    ' whole numbers with leading zeros are usually codes (account numbers) - leave alone
+    If Len(t) > 1 And Left$(t, 1) = "0" And Mid$(t, 2, 1) <> "." Then
+        skipZero = True
+        Exit Function
+    End If
+
+    v = Val(t)
+    If neg Then v = -v
+    If isPct Then v = v / 100
+    ParseNumberText = True
+End Function
+
+Public Sub Cl_FixNumbers()
+    Dim ans As String
+    Dim decMode As Long
+    Dim tc As Range
+    Dim ar As Range
+    Dim arr As Variant
+    Dim i As Long
+    Dim j As Long
+    Dim v As Double
+    Dim pct As Boolean
+    Dim skz As Boolean
+    Dim nZero As Long
+    Dim nSkip As Long
+    Dim cs As SpedChange
+    Dim ws As Worksheet
+    Dim c As Range
+    Dim calc As Long
+    Dim nf As String
+
+    ans = InputBox("How are decimals written in your text numbers?" & vbCrLf & vbCrLf & "1 = point   (1,234.50)" & vbCrLf & "2 = comma   (1.234,50)" & vbCrLf & "3 = work it out automatically", "SPED - Fix numbers", "3")
+    If StrPtr(ans) = 0 Then Exit Sub
+    decMode = Val(ans)
+    If decMode < 1 Or decMode > 3 Then
+        MsgBox "Please type 1, 2 or 3.", vbExclamation, "SPED - Fix numbers"
+        Exit Sub
+    End If
+
+    Set tc = TextCells()
+    If tc Is Nothing Then Exit Sub
+    Set ws = tc.Worksheet
+    For Each ar In tc.Areas
+        arr = AreaArr(ar)
+        For i = 1 To UBound(arr, 1)
+            For j = 1 To UBound(arr, 2)
+                If VarType(arr(i, j)) = vbString Then
+                    If ParseNumberText(CStr(arr(i, j)), decMode, v, pct, skz) Then
+                        Set c = ar.Cells(i, j)
+                        Chg_Add cs, c.Address(False, False), CStr(arr(i, j)), v, CStr(c.NumberFormat), IIf(pct, "0.00%", "")
+                    ElseIf skz Then
+                        nZero = nZero + 1
+                    Else
+                        nSkip = nSkip + 1
+                    End If
+                End If
+            Next j
+        Next i
+    Next ar
+
+    If cs.n = 0 Then
+        MsgBox "No text numbers were recognised in the selection." & IIf(nZero > 0, vbCrLf & nZero & " cell(s) with leading zeros were left alone.", ""), vbInformation, "SPED - Fix numbers"
+        Exit Sub
+    End If
+    If MsgBox(cs.n & " text number(s) will become real numbers." & vbCrLf & nZero & " with leading zeros (like 007) and " & nSkip & " other text cell(s) will be left alone." & vbCrLf & vbCrLf & "Examples:" & vbCrLf & Preview(cs, 8) & vbCrLf & "Apply now?", vbYesNo + vbQuestion, "SPED - Fix numbers") = vbNo Then Exit Sub
+
+    BeginWork calc
+    For i = 1 To cs.n
+        Set c = ws.Range(cs.addr(i))
+        nf = c.NumberFormat
+        If Len(cs.newNF(i)) > 0 Then
+            c.NumberFormat = cs.newNF(i)
+        ElseIf nf = "@" Then
+            c.NumberFormat = "General"
+        End If
+        c.Value2 = cs.newVal(i)
+        c.HorizontalAlignment = xlRight
+    Next i
+    EndWork calc
+    Undo_PushCells "Fix numbers (" & cs.n & " cells on " & ws.Name & ")", ws, cs
+    Log_Add "Fix numbers", cs.n & " text numbers converted"
+    Application.StatusBar = "SPED: " & cs.n & " number(s) fixed."
+End Sub

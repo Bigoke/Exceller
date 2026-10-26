@@ -1,0 +1,772 @@
+Attribute VB_Name = "modSheetTools"
+Option Explicit
+
+'==========================================================================
+' SPED - Sheet tools and Audit highlighter
+'==========================================================================
+
+Private Const MARK As String = "SPEDAUDIT"
+Private Const TOC_NAME As String = "Contents"
+
+'--------------------------------------------------------------------------
+' Ribbon dispatchers (the button's Tag says what to run)
+'--------------------------------------------------------------------------
+Public Sub Rib_Sheet(control As IRibbonControl)
+    Dim t As String
+    t = control.Tag
+    Select Case t
+        Case "sortaz": Sh_Sort False
+        Case "sortza": Sh_Sort True
+        Case "rename": Sh_Rename
+        Case "hidesel": Sh_HideSelected
+        Case "hideothers": Sh_HideOthers
+        Case "hidecolour": Sh_HideColour True
+        Case "unhidecolour": Sh_HideColour False
+        Case "hidename": Sh_HideMatch True
+        Case "unhidename": Sh_HideMatch False
+        Case "unhideall": Sh_UnhideAll
+        Case "toc": Sh_Contents
+        Case Else
+            If Left$(t, 4) = "col:" Then Sh_TabColour Mid$(t, 5)
+    End Select
+End Sub
+
+Public Sub Rib_Audit(control As IRibbonControl)
+    Select Case control.Tag
+        Case "all": Au_Run "all", False
+        Case "allsheets": Au_Run "all", True
+        Case "formulas": Au_Run "formulas", False
+        Case "hard": Au_Run "hard", False
+        Case "errors": Au_Run "errors", False
+        Case "neg": Au_Run "neg", False
+        Case "clear": Au_Clear
+        Case "summary": Au_Summary
+    End Select
+End Sub
+
+'--------------------------------------------------------------------------
+' Small helpers
+'--------------------------------------------------------------------------
+Private Function SelSheets() As Collection
+    Dim c As Collection
+    Dim s As Object
+    Set c = New Collection
+    On Error Resume Next
+    For Each s In ActiveWindow.SelectedSheets
+        c.Add s
+    Next s
+    If c.Count = 0 Then c.Add ActiveSheet
+    Set SelSheets = c
+End Function
+
+Private Function VisibleCount(ByVal wb As Workbook) As Long
+    Dim s As Object
+    Dim n As Long
+    For Each s In wb.Sheets
+        If s.Visible = xlSheetVisible Then n = n + 1
+    Next s
+    VisibleCount = n
+End Function
+
+Private Function StructureLocked() As Boolean
+    If ActiveWorkbook.ProtectStructure Then
+        MsgBox "The workbook structure is protected. Unprotect it first (Review > Protect Workbook).", vbExclamation, "SPED Sheet tools"
+        StructureLocked = True
+    End If
+End Function
+
+Private Function NatCmp(ByVal a As String, ByVal b As String) As Long
+    Dim i As Long
+    Dim j As Long
+    Dim na As String
+    Dim nb As String
+    Dim ca As String
+    Dim cb As String
+
+    a = LCase$(a)
+    b = LCase$(b)
+    i = 1
+    j = 1
+    Do While i <= Len(a) And j <= Len(b)
+        ca = Mid$(a, i, 1)
+        cb = Mid$(b, j, 1)
+        If ca Like "#" And cb Like "#" Then
+            na = ""
+            nb = ""
+            Do While i <= Len(a)
+                If Mid$(a, i, 1) Like "#" Then
+                    na = na & Mid$(a, i, 1)
+                    i = i + 1
+                Else
+                    Exit Do
+                End If
+            Loop
+            Do While j <= Len(b)
+                If Mid$(b, j, 1) Like "#" Then
+                    nb = nb & Mid$(b, j, 1)
+                    j = j + 1
+                Else
+                    Exit Do
+                End If
+            Loop
+            Do While Len(na) > 1 And Left$(na, 1) = "0"
+                na = Mid$(na, 2)
+            Loop
+            Do While Len(nb) > 1 And Left$(nb, 1) = "0"
+                nb = Mid$(nb, 2)
+            Loop
+            If Len(na) <> Len(nb) Then
+                NatCmp = Sgn(Len(na) - Len(nb))
+                Exit Function
+            ElseIf na <> nb Then
+                If na < nb Then NatCmp = -1 Else NatCmp = 1
+                Exit Function
+            End If
+        Else
+            If ca <> cb Then
+                If ca < cb Then NatCmp = -1 Else NatCmp = 1
+                Exit Function
+            End If
+            i = i + 1
+            j = j + 1
+        End If
+    Loop
+    If i > Len(a) And j > Len(b) Then
+        NatCmp = 0
+    ElseIf i > Len(a) Then
+        NatCmp = -1
+    Else
+        NatCmp = 1
+    End If
+End Function
+
+'--------------------------------------------------------------------------
+' Sort sheets
+'--------------------------------------------------------------------------
+Public Sub Sh_Sort(ByVal descending As Boolean)
+    Dim wb As Workbook
+    Dim act As Object
+    Dim i As Long
+    Dim j As Long
+    Dim n As Long
+    Dim c As Long
+
+    Set wb = ActiveWorkbook
+    n = wb.Sheets.Count
+    If n < 2 Then Exit Sub
+    If StructureLocked() Then Exit Sub
+    If MsgBox("Sort all " & n & " sheets " & IIf(descending, "Z to A", "A to Z") & " (numbers sorted naturally, so Sheet2 comes before Sheet10)?", vbYesNo + vbQuestion, "SPED Sheet tools") = vbNo Then Exit Sub
+
+    Set act = ActiveSheet
+    On Error GoTo fail
+    Application.ScreenUpdating = False
+    For i = 2 To n
+        j = i
+        Do While j > 1
+            c = NatCmp(wb.Sheets(j - 1).Name, wb.Sheets(j).Name)
+            If descending Then c = -c
+            If c > 0 Then
+                wb.Sheets(j).Move Before:=wb.Sheets(j - 1)
+                j = j - 1
+            Else
+                Exit Do
+            End If
+        Loop
+    Next i
+    act.Activate
+    Application.ScreenUpdating = True
+    Log_Add "Sort sheets", n & " sheets sorted " & IIf(descending, "Z to A", "A to Z") & " in " & wb.Name
+    Exit Sub
+fail:
+    Application.ScreenUpdating = True
+    MsgBox "Could not sort the sheets: " & Err.Description, vbExclamation, "SPED Sheet tools"
+End Sub
+
+'--------------------------------------------------------------------------
+' Bulk rename
+'--------------------------------------------------------------------------
+Public Sub Sh_Rename()
+    Dim col As Collection
+    Dim s As Object
+    Dim fnd As String
+    Dim rep As String
+    Dim pre As String
+    Dim suf As String
+    Dim nn As String
+    Dim preview As String
+    Dim shown As Long
+    Dim ans As VbMsgBoxResult
+    Dim done As Long
+    Dim skipped As Long
+    Dim names() As String
+    Dim oldN() As String
+    Dim newN() As String
+    Dim oldNm As String
+    Dim i As Long
+
+    If StructureLocked() Then Exit Sub
+
+    Set col = SelSheets()
+    If col.Count = 1 Then
+        ans = MsgBox("Only one sheet is selected." & vbCrLf & "Yes = rename ALL sheets" & vbCrLf & "No = rename just this sheet" & vbCrLf & "Cancel = stop", vbYesNoCancel + vbQuestion, "SPED - Bulk rename")
+        If ans = vbCancel Then Exit Sub
+        If ans = vbYes Then
+            Set col = New Collection
+            For Each s In ActiveWorkbook.Sheets
+                col.Add s
+            Next s
+        End If
+    End If
+
+    fnd = InputBox("Text to find in the sheet names (leave empty to skip find/replace):", "SPED - Bulk rename")
+    If StrPtr(fnd) = 0 Then Exit Sub
+    If Len(fnd) > 0 Then
+        rep = InputBox("Replace '" & fnd & "' with (leave empty to remove it):", "SPED - Bulk rename")
+        If StrPtr(rep) = 0 Then Exit Sub
+    End If
+    pre = InputBox("Add at the START of each name (prefix, leave empty for none):", "SPED - Bulk rename")
+    If StrPtr(pre) = 0 Then Exit Sub
+    suf = InputBox("Add at the END of each name (suffix, leave empty for none):", "SPED - Bulk rename")
+    If StrPtr(suf) = 0 Then Exit Sub
+
+    ReDim names(1 To col.Count)
+    ReDim oldN(1 To col.Count)
+    ReDim newN(1 To col.Count)
+    For i = 1 To col.Count
+        nn = col(i).Name
+        If Len(fnd) > 0 Then nn = Replace(nn, fnd, rep, 1, -1, vbTextCompare)
+        nn = pre & nn & suf
+        nn = CleanName(nn)
+        names(i) = nn
+        If nn <> col(i).Name And shown < 8 Then
+            preview = preview & col(i).Name & "  ->  " & nn & vbCrLf
+            shown = shown + 1
+        End If
+    Next i
+
+    If Len(preview) = 0 Then
+        MsgBox "Nothing would change.", vbInformation, "SPED - Bulk rename"
+        Exit Sub
+    End If
+    If MsgBox("Preview (first " & shown & " changes):" & vbCrLf & vbCrLf & preview & vbCrLf & "Rename now?", vbYesNo + vbQuestion, "SPED - Bulk rename") = vbNo Then Exit Sub
+
+    Application.ScreenUpdating = False
+    For i = 1 To col.Count
+        If names(i) <> col(i).Name And Len(names(i)) > 0 Then
+            On Error Resume Next
+            Err.Clear
+            oldNm = col(i).Name
+            col(i).Name = names(i)
+            If Err.Number = 0 Then
+                done = done + 1
+                oldN(done) = oldNm
+                newN(done) = names(i)
+            Else
+                skipped = skipped + 1
+            End If
+            On Error GoTo 0
+        End If
+    Next i
+    Application.ScreenUpdating = True
+    If done > 0 Then
+        Undo_PushRename ActiveWorkbook.Name, newN, oldN, done
+        Log_Add "Bulk rename", done & " sheets renamed in " & ActiveWorkbook.Name
+    End If
+    MsgBox "Renamed " & done & " sheet(s)." & IIf(skipped > 0, vbCrLf & skipped & " skipped (name already used, empty or invalid).", ""), vbInformation, "SPED - Bulk rename"
+End Sub
+
+Private Function CleanName(ByVal s As String) As String
+    Dim ch As Variant
+    For Each ch In Array(":", "\", "/", "?", "*", "[", "]")
+        s = Replace(s, CStr(ch), "-")
+    Next ch
+    s = Trim$(s)
+    If Left$(s, 1) = "'" Then s = Mid$(s, 2)
+    If Right$(s, 1) = "'" Then s = Left$(s, Len(s) - 1)
+    If Len(s) > 31 Then s = Left$(s, 31)
+    CleanName = s
+End Function
+
+'--------------------------------------------------------------------------
+' Tab colours
+'--------------------------------------------------------------------------
+Public Sub Sh_TabColour(ByVal key As String)
+    Dim col As Collection
+    Dim s As Object
+    Dim c As Long
+    Dim clear As Boolean
+
+    Select Case LCase$(Trim$(key))
+        Case "red": c = RGB(220, 38, 38)
+        Case "orange": c = RGB(249, 115, 22)
+        Case "yellow": c = RGB(250, 204, 21)
+        Case "green": c = RGB(34, 197, 94)
+        Case "teal": c = RGB(20, 184, 166)
+        Case "blue": c = RGB(37, 99, 235)
+        Case "purple": c = RGB(147, 51, 234)
+        Case "pink": c = RGB(236, 72, 153)
+        Case "grey", "gray": c = RGB(107, 114, 128)
+        Case "dark": c = RGB(31, 41, 55)
+        Case "none", "clear": clear = True
+        Case Else
+            MsgBox "Unknown colour '" & key & "'.", vbExclamation, "SPED Sheet tools"
+            Exit Sub
+    End Select
+
+    Set col = SelSheets()
+    On Error Resume Next
+    For Each s In col
+        If clear Then
+            s.Tab.ColorIndex = xlColorIndexNone
+        Else
+            s.Tab.Color = c
+        End If
+    Next s
+    Log_Add "Tab colour", LCase$(Trim$(key)) & " on " & col.Count & " sheet(s)"
+End Sub
+
+Public Sub Sh_TabColourPrompt()
+    Dim k As String
+    k = InputBox("Tab colour for the selected sheet(s):" & vbCrLf & "red, orange, yellow, green, teal, blue, purple, pink, grey, dark or none", "SPED - Tab colour", "blue")
+    If Len(Trim$(k)) = 0 Then Exit Sub
+    Sh_TabColour k
+End Sub
+
+Private Function SheetColour(ByVal s As Object) As Long
+    On Error Resume Next
+    If s.Tab.ColorIndex = xlColorIndexNone Then
+        SheetColour = -1
+    Else
+        SheetColour = s.Tab.Color
+    End If
+End Function
+
+'--------------------------------------------------------------------------
+' Hide / unhide groups
+'--------------------------------------------------------------------------
+Private Sub ApplyVisibility(ByVal col As Collection, ByVal hide As Boolean)
+    Dim s As Object
+    Dim n As Long
+    Dim wb As Workbook
+    Dim act As Object
+
+    If col.Count = 0 Then
+        MsgBox "No matching sheets found.", vbInformation, "SPED Sheet tools"
+        Exit Sub
+    End If
+    If StructureLocked() Then Exit Sub
+    Set wb = ActiveWorkbook
+
+    If hide Then
+        For Each s In col
+            If s.Visible = xlSheetVisible Then n = n + 1
+        Next s
+        If n = 0 Then
+            MsgBox "Those sheets are already hidden.", vbInformation, "SPED Sheet tools"
+            Exit Sub
+        End If
+        If VisibleCount(wb) - n < 1 Then
+            MsgBox "At least one sheet must stay visible.", vbExclamation, "SPED Sheet tools"
+            Exit Sub
+        End If
+    End If
+
+    Set act = ActiveSheet
+    Application.ScreenUpdating = False
+    On Error Resume Next
+    n = 0
+    For Each s In col
+        If hide Then
+            If s.Visible = xlSheetVisible Then
+                s.Visible = xlSheetHidden
+                If Err.Number = 0 Then n = n + 1
+                Err.Clear
+            End If
+        Else
+            If s.Visible = xlSheetHidden Then
+                s.Visible = xlSheetVisible
+                If Err.Number = 0 Then n = n + 1
+                Err.Clear
+            End If
+        End If
+    Next s
+    If act.Visible = xlSheetVisible Then act.Activate
+    On Error GoTo 0
+    Application.ScreenUpdating = True
+    Application.StatusBar = "SPED: " & n & " sheet(s) " & IIf(hide, "hidden", "unhidden") & "."
+    Log_Add IIf(hide, "Hide sheets", "Unhide sheets"), n & " sheet(s) in " & wb.Name
+End Sub
+
+Public Sub Sh_HideSelected()
+    ApplyVisibility SelSheets(), True
+End Sub
+
+Public Sub Sh_HideOthers()
+    Dim col As Collection
+    Dim s As Object
+    Dim an As String
+    Set col = New Collection
+    an = ActiveSheet.Name
+    For Each s In ActiveWorkbook.Sheets
+        If s.Name <> an Then col.Add s
+    Next s
+    ApplyVisibility col, True
+End Sub
+
+Public Sub Sh_UnhideAll()
+    Dim col As Collection
+    Dim s As Object
+    Set col = New Collection
+    For Each s In ActiveWorkbook.Sheets
+        If s.Visible = xlSheetHidden Then col.Add s
+    Next s
+    ApplyVisibility col, False
+End Sub
+
+Public Sub Sh_HideMatch(ByVal hide As Boolean)
+    Dim txt As String
+    Dim col As Collection
+    Dim s As Object
+    txt = InputBox(IIf(hide, "Hide", "Unhide") & " all sheets whose name contains:", "SPED Sheet tools")
+    If Len(Trim$(txt)) = 0 Then Exit Sub
+    Set col = New Collection
+    For Each s In ActiveWorkbook.Sheets
+        If InStr(1, s.Name, Trim$(txt), vbTextCompare) > 0 Then
+            If hide Then
+                If s.Visible = xlSheetVisible Then col.Add s
+            Else
+                If s.Visible = xlSheetHidden Then col.Add s
+            End If
+        End If
+    Next s
+    ApplyVisibility col, hide
+End Sub
+
+Public Sub Sh_HideColour(ByVal hide As Boolean)
+    Dim col As Collection
+    Dim s As Object
+    Dim c As Long
+    c = SheetColour(ActiveSheet)
+    If c = -1 Then
+        MsgBox "The active sheet has no tab colour. Colour its tab first, then use this to hide or unhide every sheet with the same colour.", vbInformation, "SPED Sheet tools"
+        Exit Sub
+    End If
+    Set col = New Collection
+    For Each s In ActiveWorkbook.Sheets
+        If SheetColour(s) = c Then
+            If hide Then
+                If s.Visible = xlSheetVisible Then col.Add s
+            Else
+                If s.Visible = xlSheetHidden Then col.Add s
+            End If
+        End If
+    Next s
+    ApplyVisibility col, hide
+End Sub
+
+'--------------------------------------------------------------------------
+' Table of contents
+'--------------------------------------------------------------------------
+Public Sub Sh_Contents()
+    Dim wb As Workbook
+    Dim ws As Worksheet
+    Dim s As Object
+    Dim r As Long
+    Dim n As Long
+    Dim sa As String
+    Dim act As Object
+
+    Set wb = ActiveWorkbook
+    If StructureLocked() Then Exit Sub
+    Set act = ActiveSheet
+
+    On Error Resume Next
+    Set ws = wb.Worksheets(TOC_NAME)
+    On Error GoTo fail
+    Application.ScreenUpdating = False
+
+    If ws Is Nothing Then
+        Set ws = wb.Worksheets.Add(Before:=wb.Sheets(1))
+        ws.Name = TOC_NAME
+    Else
+        If MsgBox("A sheet named '" & TOC_NAME & "' already exists. Rebuild it?", vbYesNo + vbQuestion, "SPED Sheet tools") = vbNo Then
+            Application.ScreenUpdating = True
+            Exit Sub
+        End If
+        ws.Hyperlinks.Delete
+        ws.Cells.Clear
+    End If
+
+    ws.Range("A1").Value = "Contents"
+    ws.Range("A1").Font.Size = 16
+    ws.Range("A1").Font.Bold = True
+    ws.Range("A2").Value = "Click a sheet name to jump to it."
+    ws.Range("A2").Font.Italic = True
+    ws.Range("A2").Font.Color = RGB(107, 114, 128)
+
+    ws.Range("A4:E4").Value = Array("#", "Sheet", "Type", "Used range", "Status")
+    With ws.Range("A4:E4")
+        .Font.Bold = True
+        .Font.Color = RGB(255, 255, 255)
+        .Interior.Color = RGB(30, 41, 59)
+    End With
+
+    r = 5
+    For Each s In wb.Sheets
+        If s.Name <> TOC_NAME And s.Visible <> xlSheetVeryHidden Then
+            n = n + 1
+            ws.Cells(r, 1).Value = n
+            ws.Cells(r, 2).Value = s.Name
+            If TypeName(s) = "Worksheet" Then
+                ws.Cells(r, 3).Value = "Worksheet"
+                If s.UsedRange.CountLarge = 1 And IsEmpty(s.Range("A1").Value) Then
+                    ws.Cells(r, 4).Value = "(empty)"
+                Else
+                    ws.Cells(r, 4).Value = "'" & s.UsedRange.Address(False, False)
+                End If
+            Else
+                ws.Cells(r, 3).Value = "Chart"
+            End If
+            If s.Visible = xlSheetVisible Then
+                ws.Cells(r, 5).Value = "Visible"
+                sa = "'" & Replace(s.Name, "'", "''") & "'!A1"
+                On Error Resume Next
+                ws.Hyperlinks.Add Anchor:=ws.Cells(r, 2), Address:="", SubAddress:=sa, TextToDisplay:=s.Name
+                On Error GoTo fail
+            Else
+                ws.Cells(r, 5).Value = "Hidden"
+                ws.Range(ws.Cells(r, 1), ws.Cells(r, 5)).Font.Color = RGB(156, 163, 175)
+            End If
+            If n Mod 2 = 0 Then ws.Range(ws.Cells(r, 1), ws.Cells(r, 5)).Interior.Color = RGB(244, 246, 249)
+            r = r + 1
+        End If
+    Next s
+
+    ws.Range("A:A").HorizontalAlignment = xlCenter
+    ws.Columns("A").ColumnWidth = 6
+    ws.Columns("B").ColumnWidth = 34
+    ws.Columns("C").ColumnWidth = 12
+    ws.Columns("D").ColumnWidth = 18
+    ws.Columns("E").ColumnWidth = 10
+    ws.Range("A1:A2").HorizontalAlignment = xlLeft
+    ws.Tab.Color = RGB(37, 99, 235)
+    ws.Activate
+    ActiveWindow.DisplayGridlines = False
+    ws.Range("A1").Select
+    Application.ScreenUpdating = True
+    Application.StatusBar = "SPED: contents sheet created with " & n & " entries."
+    Log_Add "Contents sheet", n & " entries in " & wb.Name
+    Exit Sub
+fail:
+    Application.ScreenUpdating = True
+    MsgBox "Could not build the contents sheet: " & Err.Description, vbExclamation, "SPED Sheet tools"
+End Sub
+
+'--------------------------------------------------------------------------
+' Audit highlighter (conditional formatting, so nothing is overwritten)
+'--------------------------------------------------------------------------
+Private Function AuFormula(ByVal kind As String, ByVal a As String) As String
+    Select Case kind
+        Case "formulas"
+            AuFormula = "=AND(ISFORMULA(" & a & "),LEN(""" & MARK & "_F"")>0)"
+        Case "hard"
+            AuFormula = "=AND(ISNUMBER(" & a & "),NOT(ISFORMULA(" & a & ")),LEFT(CELL(""format""," & a & "),1)<>""D"",LEN(""" & MARK & "_H"")>0)"
+        Case "errors"
+            AuFormula = "=AND(ISERROR(" & a & "),LEN(""" & MARK & "_E"")>0)"
+        Case "neg"
+            AuFormula = "=AND(ISNUMBER(" & a & ")," & a & "<0,LEN(""" & MARK & "_N"")>0)"
+    End Select
+End Function
+
+Private Function AuTag(ByVal kind As String) As String
+    Select Case kind
+        Case "formulas": AuTag = MARK & "_F"
+        Case "hard": AuTag = MARK & "_H"
+        Case "errors": AuTag = MARK & "_E"
+        Case "neg": AuTag = MARK & "_N"
+        Case Else: AuTag = MARK
+    End Select
+End Function
+
+Private Sub AuRemove(ByVal ws As Worksheet, ByVal tag As String)
+    Dim i As Long
+    Dim fc As Object
+    Dim f As String
+    On Error Resume Next
+    For i = ws.Cells.FormatConditions.Count To 1 Step -1
+        Set fc = ws.Cells.FormatConditions(i)
+        f = ""
+        f = fc.Formula1
+        If InStr(1, f, tag, vbTextCompare) > 0 Then fc.Delete
+    Next i
+End Sub
+
+Private Sub AuAddRule(ByVal ws As Worksheet, ByVal rng As Range, ByVal kind As String)
+    Dim ar As Range
+    Dim f As String
+    Dim fc As Object
+
+    f = AuFormula(kind, ActiveCell.Address(False, False))
+    For Each ar In rng.Areas
+        Set fc = ar.FormatConditions.Add(Type:=xlExpression, Formula1:=f)
+        Select Case kind
+            Case "formulas"
+                fc.Interior.Color = RGB(221, 235, 247)
+            Case "hard"
+                fc.Interior.Color = RGB(255, 235, 156)
+            Case "errors"
+                fc.Interior.Color = RGB(255, 199, 206)
+                fc.Font.Color = RGB(156, 0, 6)
+            Case "neg"
+                fc.Interior.Color = RGB(248, 203, 173)
+                fc.Font.Color = RGB(132, 60, 12)
+        End Select
+        fc.StopIfTrue = False
+        fc.SetFirstPriority
+    Next ar
+End Sub
+
+Private Sub AuOnSheet(ByVal ws As Worksheet, ByVal kind As String, ByVal useSelection As Boolean)
+    Dim rng As Range
+    Dim order As Variant
+    Dim k As Variant
+
+    If ws.ProtectContents Then Exit Sub
+    If useSelection And TypeName(Selection) = "Range" Then
+        If Selection.CountLarge > 1 Then Set rng = Selection
+    End If
+    If rng Is Nothing Then Set rng = ws.UsedRange
+
+    If kind = "all" Then
+        AuRemove ws, MARK
+        order = Array("formulas", "hard", "neg", "errors")
+    Else
+        AuRemove ws, AuTag(kind)
+        order = Array(kind)
+    End If
+    For Each k In order
+        AuAddRule ws, rng, CStr(k)
+    Next k
+End Sub
+
+Public Sub Au_Run(ByVal kind As String, ByVal allSheets As Boolean)
+    Dim ws As Worksheet
+    Dim act As Object
+    Dim n As Long
+
+    If TypeName(ActiveSheet) <> "Worksheet" Then
+        MsgBox "Activate a worksheet first.", vbExclamation, "SPED Audit"
+        Exit Sub
+    End If
+    Set act = ActiveSheet
+    On Error GoTo fail
+    Application.ScreenUpdating = False
+    If allSheets Then
+        If MsgBox("Highlight every visible worksheet in this workbook?", vbYesNo + vbQuestion, "SPED Audit") = vbNo Then
+            Application.ScreenUpdating = True
+            Exit Sub
+        End If
+        For Each ws In ActiveWorkbook.Worksheets
+            If ws.Visible = xlSheetVisible Then
+                ws.Activate
+                AuOnSheet ws, kind, False
+                n = n + 1
+            End If
+        Next ws
+        act.Activate
+    Else
+        If act.ProtectContents Then
+            Application.ScreenUpdating = True
+            MsgBox "This sheet is protected. Unprotect it first.", vbExclamation, "SPED Audit"
+            Exit Sub
+        End If
+        AuOnSheet act, kind, True
+        n = 1
+    End If
+    Application.ScreenUpdating = True
+    Application.StatusBar = "SPED Audit: blue = formulas, yellow = hard-coded numbers, red = errors, orange = negative values (" & n & " sheet(s))."
+    Log_Add "Audit highlight", kind & " on " & n & " sheet(s)"
+    Exit Sub
+fail:
+    Application.ScreenUpdating = True
+    MsgBox "Could not highlight: " & Err.Description, vbExclamation, "SPED Audit"
+End Sub
+
+Public Sub Au_Clear()
+    Dim s As Object
+    Dim n As Long
+    Dim before As Long
+    On Error Resume Next
+    For Each s In SelSheets()
+        If TypeName(s) = "Worksheet" Then
+            If Not s.ProtectContents Then
+                AuRemove s, MARK
+                n = n + 1
+            End If
+        End If
+    Next s
+    Application.StatusBar = "SPED Audit: colours cleared on " & n & " sheet(s)."
+    Log_Add "Audit clear", n & " sheet(s)"
+End Sub
+
+Public Sub Au_Summary()
+    Dim ws As Worksheet
+    Dim rng As Range
+    Dim nF As Double
+    Dim nH As Double
+    Dim nE As Double
+    Dim nN As Double
+    Dim c As Range
+    Dim sc As Range
+    Dim firstErr As String
+    Dim k As Long
+    Dim msg As String
+
+    If TypeName(ActiveSheet) <> "Worksheet" Then
+        MsgBox "Activate a worksheet first.", vbExclamation, "SPED Audit"
+        Exit Sub
+    End If
+    Set ws = ActiveSheet
+    Set rng = ws.UsedRange
+
+    On Error Resume Next
+    nF = rng.SpecialCells(xlCellTypeFormulas).CountLarge
+    Err.Clear
+    Set sc = rng.SpecialCells(xlCellTypeConstants, xlNumbers)
+    If Err.Number = 0 Then
+        If sc.CountLarge <= 50000 Then
+            For Each c In sc.Cells
+                If VarType(c.Value) <> vbDate Then nH = nH + 1
+            Next c
+        Else
+            nH = sc.CountLarge
+        End If
+    End If
+    Err.Clear
+    Set sc = Nothing
+    Set sc = rng.SpecialCells(xlCellTypeFormulas, xlErrors)
+    If Err.Number = 0 Then
+        nE = nE + sc.CountLarge
+        For Each c In sc.Cells
+            If k < 10 Then
+                firstErr = firstErr & IIf(k > 0, ", ", "") & c.Address(False, False)
+                k = k + 1
+            End If
+        Next c
+    End If
+    Err.Clear
+    Set sc = Nothing
+    Set sc = rng.SpecialCells(xlCellTypeConstants, xlErrors)
+    If Err.Number = 0 Then nE = nE + sc.CountLarge
+    Err.Clear
+    nN = Application.WorksheetFunction.CountIf(rng, "<0")
+    On Error GoTo 0
+
+    msg = "Sheet: " & ws.Name & vbCrLf & "Range: " & rng.Address(False, False) & vbCrLf & vbCrLf
+    msg = msg & "Formulas: " & Format(nF, "#,##0") & vbCrLf
+    msg = msg & "Hard-coded numbers (dates excluded): " & Format(nH, "#,##0") & vbCrLf
+    msg = msg & "Errors: " & Format(nE, "#,##0") & vbCrLf
+    msg = msg & "Negative values: " & Format(nN, "#,##0")
+    If Len(firstErr) > 0 Then msg = msg & vbCrLf & vbCrLf & "First errors: " & firstErr
+    MsgBox msg, vbInformation, "SPED Audit summary"
+End Sub

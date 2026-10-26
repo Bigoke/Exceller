@@ -1,0 +1,464 @@
+Attribute VB_Name = "modLog"
+Option Explicit
+
+'==========================================================================
+' SPED - run log, undo stack and update checker
+'==========================================================================
+
+Public Const SPED_VERSION As String = "1.1.0"
+
+Public Type SpedChange
+    n As Long
+    addr() As String
+    oldVal() As Variant
+    newVal() As Variant
+    oldNF() As String
+    newNF() As String
+End Type
+
+Private Type UndoOp
+    kind As String
+    wb As String
+    sh As String
+    desc As String
+    n As Long
+    addr() As String
+    oldVal() As Variant
+    oldNF() As String
+End Type
+
+Private m_Ops(1 To 10) As UndoOp
+Private m_OpCount As Long
+Private m_LogAdds As Long
+
+'--------------------------------------------------------------------------
+' Change-set helper
+'--------------------------------------------------------------------------
+Public Sub Chg_Add(ByRef cs As SpedChange, ByVal a As String, ByVal ov As Variant, ByVal nv As Variant, ByVal onf As String, ByVal nnf As String)
+    Dim cap As Long
+    If cs.n = 0 Then
+        ReDim cs.addr(1 To 256)
+        ReDim cs.oldVal(1 To 256)
+        ReDim cs.newVal(1 To 256)
+        ReDim cs.oldNF(1 To 256)
+        ReDim cs.newNF(1 To 256)
+    ElseIf cs.n >= UBound(cs.addr) Then
+        cap = UBound(cs.addr) * 2
+        ReDim Preserve cs.addr(1 To cap)
+        ReDim Preserve cs.oldVal(1 To cap)
+        ReDim Preserve cs.newVal(1 To cap)
+        ReDim Preserve cs.oldNF(1 To cap)
+        ReDim Preserve cs.newNF(1 To cap)
+    End If
+    cs.n = cs.n + 1
+    cs.addr(cs.n) = a
+    cs.oldVal(cs.n) = ov
+    cs.newVal(cs.n) = nv
+    cs.oldNF(cs.n) = onf
+    cs.newNF(cs.n) = nnf
+End Sub
+
+'--------------------------------------------------------------------------
+' Writing text safely (so "001" or "1/2" stays text)
+'--------------------------------------------------------------------------
+Public Sub WriteText(ByVal c As Range, ByVal s As String)
+    Dim needPrefix As Boolean
+    If c.NumberFormat = "@" Then
+        c.Value = s
+        Exit Sub
+    End If
+    needPrefix = (s Like "*#*")
+    If Len(s) > 0 Then
+        If InStr("=+-@'", Left$(s, 1)) > 0 Then needPrefix = True
+    End If
+    If UCase$(s) = "TRUE" Or UCase$(s) = "FALSE" Then needPrefix = True
+    If needPrefix Then
+        c.Value = "'" & s
+    Else
+        c.Value = s
+    End If
+End Sub
+
+'--------------------------------------------------------------------------
+' Run log
+'--------------------------------------------------------------------------
+Private Function LogPath() As String
+    LogPath = Environ$("APPDATA") & "\SPED\runlog.txt"
+End Function
+
+Private Function Clean1(ByVal s As String) As String
+    s = Replace(s, vbCr, " ")
+    s = Replace(s, vbLf, " ")
+    s = Replace(s, vbTab, " ")
+    Clean1 = s
+End Function
+
+Public Sub Log_Add(ByVal action As String, ByVal detail As String)
+    Dim f As Integer
+    Dim folder As String
+    Dim wbn As String
+    Dim shn As String
+
+    On Error GoTo done
+    wbn = ActiveWorkbook.Name
+    shn = ActiveSheet.Name
+    folder = Environ$("APPDATA") & "\SPED"
+    If Len(Dir(folder, vbDirectory)) = 0 Then MkDir folder
+    f = FreeFile
+    Open LogPath() For Append As #f
+    Print #f, Format(Now, "yyyy-mm-dd hh:nn:ss") & vbTab & Clean1(wbn) & vbTab & Clean1(shn) & vbTab & Clean1(action) & vbTab & Clean1(detail)
+    Close #f
+    m_LogAdds = m_LogAdds + 1
+    If m_LogAdds Mod 100 = 0 Then TrimLog
+done:
+    On Error Resume Next
+    Close #f
+End Sub
+
+Private Sub TrimLog()
+    Dim lines() As String
+    Dim f As Integer
+    Dim s As String
+    Dim n As Long
+    Dim i As Long
+    Dim startAt As Long
+
+    On Error GoTo done
+    If FileLen(LogPath()) < 400000 Then Exit Sub
+    ReDim lines(1 To 100000)
+    f = FreeFile
+    Open LogPath() For Input As #f
+    Do While Not EOF(f)
+        Line Input #f, s
+        n = n + 1
+        If n > UBound(lines) Then Exit Do
+        lines(n) = s
+    Loop
+    Close #f
+    startAt = n - 1500
+    If startAt < 1 Then startAt = 1
+    f = FreeFile
+    Open LogPath() For Output As #f
+    For i = startAt To n
+        Print #f, lines(i)
+    Next i
+    Close #f
+done:
+    On Error Resume Next
+    Close #f
+End Sub
+
+Public Sub Log_Show()
+    Dim lines() As String
+    Dim f As Integer
+    Dim s As String
+    Dim n As Long
+    Dim i As Long
+    Dim r As Long
+    Dim p() As String
+    Dim wb As Workbook
+    Dim ws As Worksheet
+    Dim maxShow As Long
+
+    If Len(Dir(LogPath())) = 0 Then
+        MsgBox "The run log is empty so far.", vbInformation, "SPED run log"
+        Exit Sub
+    End If
+    On Error GoTo fail
+    ReDim lines(1 To 100000)
+    f = FreeFile
+    Open LogPath() For Input As #f
+    Do While Not EOF(f)
+        Line Input #f, s
+        n = n + 1
+        If n > UBound(lines) Then Exit Do
+        lines(n) = s
+    Loop
+    Close #f
+
+    Application.ScreenUpdating = False
+    Set wb = Workbooks.Add
+    Set ws = wb.Worksheets(1)
+    ws.Name = "SPED run log"
+    ws.Range("A1").Value = "SPED run log - newest first"
+    ws.Range("A1").Font.Bold = True
+    ws.Range("A1").Font.Size = 14
+    ws.Range("A2").Value = "Undo works for the most recent text, date, number and rename changes in the current Excel session (SPED > Data > Undo last SPED change)."
+    ws.Range("A2").Font.Italic = True
+    ws.Range("A4:E4").Value = Array("When", "Workbook", "Sheet", "Action", "Details")
+    ws.Range("A4:E4").Font.Bold = True
+    ws.Range("A4:E4").Interior.Color = RGB(30, 41, 59)
+    ws.Range("A4:E4").Font.Color = RGB(255, 255, 255)
+
+    maxShow = 500
+    r = 5
+    For i = n To 1 Step -1
+        If r - 4 > maxShow Then Exit For
+        p = Split(lines(i), vbTab)
+        If UBound(p) >= 4 Then
+            ws.Cells(r, 1).NumberFormat = "@"
+            ws.Cells(r, 1).Value = p(0)
+            ws.Cells(r, 2).Value = p(1)
+            ws.Cells(r, 3).Value = p(2)
+            ws.Cells(r, 4).Value = p(3)
+            ws.Cells(r, 5).NumberFormat = "@"
+            ws.Cells(r, 5).Value = p(4)
+            r = r + 1
+        End If
+    Next i
+    ws.Columns("A").ColumnWidth = 20
+    ws.Columns("B").ColumnWidth = 28
+    ws.Columns("C").ColumnWidth = 20
+    ws.Columns("D").ColumnWidth = 26
+    ws.Columns("E").ColumnWidth = 70
+    ws.Activate
+    ActiveWindow.DisplayGridlines = False
+    Application.ScreenUpdating = True
+    Exit Sub
+fail:
+    Application.ScreenUpdating = True
+    MsgBox "Could not show the log: " & Err.Description, vbExclamation, "SPED run log"
+End Sub
+
+'--------------------------------------------------------------------------
+' Undo stack (this Excel session only)
+'--------------------------------------------------------------------------
+Private Sub PushOp(ByRef op As UndoOp)
+    Dim i As Long
+    If m_OpCount = UBound(m_Ops) Then
+        For i = 1 To m_OpCount - 1
+            m_Ops(i) = m_Ops(i + 1)
+        Next i
+    Else
+        m_OpCount = m_OpCount + 1
+    End If
+    m_Ops(m_OpCount) = op
+End Sub
+
+Public Sub Undo_PushCells(ByVal desc As String, ByVal ws As Worksheet, ByRef cs As SpedChange)
+    Dim op As UndoOp
+    If cs.n = 0 Then Exit Sub
+    op.kind = "cells"
+    op.wb = ws.Parent.Name
+    op.sh = ws.Name
+    op.desc = desc
+    op.n = cs.n
+    op.addr = cs.addr
+    op.oldVal = cs.oldVal
+    op.oldNF = cs.oldNF
+    PushOp op
+End Sub
+
+Public Sub Undo_PushFill(ByVal desc As String, ByVal ws As Worksheet, ByRef cs As SpedChange)
+    Dim op As UndoOp
+    If cs.n = 0 Then Exit Sub
+    op.kind = "fill"
+    op.wb = ws.Parent.Name
+    op.sh = ws.Name
+    op.desc = desc
+    op.n = cs.n
+    op.addr = cs.addr
+    op.oldVal = cs.oldVal
+    op.oldNF = cs.oldNF
+    PushOp op
+End Sub
+
+Public Sub Undo_PushRename(ByVal wbName As String, ByRef newN() As String, ByRef oldN() As String, ByVal n As Long)
+    Dim op As UndoOp
+    Dim i As Long
+    If n = 0 Then Exit Sub
+    op.kind = "rename"
+    op.wb = wbName
+    op.sh = ""
+    op.desc = "Bulk rename (" & n & " sheets)"
+    op.n = n
+    ReDim op.addr(1 To n)
+    ReDim op.oldVal(1 To n)
+    ReDim op.oldNF(1 To n)
+    For i = 1 To n
+        op.addr(i) = newN(i)
+        op.oldVal(i) = oldN(i)
+        op.oldNF(i) = ""
+    Next i
+    PushOp op
+End Sub
+
+Public Function Undo_Available() As String
+    If m_OpCount = 0 Then
+        Undo_Available = ""
+    Else
+        Undo_Available = m_Ops(m_OpCount).desc
+    End If
+End Function
+
+Public Sub Undo_Last()
+    Dim op As UndoOp
+    Dim wb As Workbook
+    Dim ws As Worksheet
+    Dim i As Long
+    Dim c As Range
+    Dim done As Long
+    Dim calc As Long
+
+    If m_OpCount = 0 Then
+        MsgBox "There is nothing to undo. SPED can undo its most recent text, date, number, rename and compare-highlight changes during the current Excel session.", vbInformation, "SPED undo"
+        Exit Sub
+    End If
+    op = m_Ops(m_OpCount)
+    If MsgBox("Undo: " & op.desc & "?", vbYesNo + vbQuestion, "SPED undo") = vbNo Then Exit Sub
+
+    On Error GoTo fail
+    Set wb = Workbooks(op.wb)
+    calc = Application.Calculation
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Select Case op.kind
+        Case "cells"
+            Set ws = wb.Worksheets(op.sh)
+            For i = 1 To op.n
+                Set c = ws.Range(op.addr(i))
+                If Len(op.oldNF(i)) > 0 Then c.NumberFormat = op.oldNF(i)
+                If VarType(op.oldVal(i)) = vbString Then
+                    WriteText c, CStr(op.oldVal(i))
+                Else
+                    c.Value2 = op.oldVal(i)
+                End If
+                done = done + 1
+            Next i
+        Case "fill"
+            Set ws = wb.Worksheets(op.sh)
+            For i = 1 To op.n
+                Set c = ws.Range(op.addr(i))
+                If op.oldNF(i) = CStr(xlNone) Then
+                    c.Interior.Pattern = xlNone
+                Else
+                    c.Interior.Pattern = xlSolid
+                    c.Interior.Color = CLng(op.oldVal(i))
+                End If
+                done = done + 1
+            Next i
+        Case "rename"
+            For i = op.n To 1 Step -1
+                wb.Sheets(op.addr(i)).Name = CStr(op.oldVal(i))
+                done = done + 1
+            Next i
+    End Select
+
+    Application.Calculation = calc
+    Application.ScreenUpdating = True
+    m_OpCount = m_OpCount - 1
+    Log_Add "Undo", op.desc
+    Application.StatusBar = "SPED: undone - " & op.desc
+    Exit Sub
+fail:
+    On Error Resume Next
+    Application.Calculation = calc
+    Application.ScreenUpdating = True
+    m_OpCount = m_OpCount - 1
+    MsgBox "Could not fully undo (" & Err.Description & "). The workbook or sheet may have changed since.", vbExclamation, "SPED undo"
+End Sub
+
+'--------------------------------------------------------------------------
+' Version and update checker
+'--------------------------------------------------------------------------
+Private Function ReadSource(ByVal src As String) As String
+    Dim h As Object
+    Dim f As Integer
+    Dim s As String
+    Dim all As String
+
+    On Error GoTo done
+    If LCase$(Left$(src, 4)) = "http" Then
+        Set h = CreateObject("MSXML2.ServerXMLHTTP.6.0")
+        h.setTimeouts 4000, 4000, 6000, 6000
+        h.Open "GET", src, False
+        h.send
+        If h.Status = 200 Then ReadSource = h.responseText
+    Else
+        If Len(Dir(src)) = 0 Then GoTo done
+        f = FreeFile
+        Open src For Input As #f
+        Do While Not EOF(f)
+            Line Input #f, s
+            all = all & s & vbLf
+        Loop
+        ReadSource = all
+    End If
+done:
+    On Error Resume Next
+    Close #f
+End Function
+
+Private Function CmpVer(ByVal a As String, ByVal b As String) As Long
+    Dim pa() As String
+    Dim pb() As String
+    Dim i As Long
+    Dim x As Long
+    Dim y As Long
+    pa = Split(Trim$(a), ".")
+    pb = Split(Trim$(b), ".")
+    For i = 0 To 3
+        x = 0
+        y = 0
+        If i <= UBound(pa) Then x = Val(pa(i))
+        If i <= UBound(pb) Then y = Val(pb(i))
+        If x > y Then
+            CmpVer = 1
+            Exit Function
+        ElseIf x < y Then
+            CmpVer = -1
+            Exit Function
+        End If
+    Next i
+    CmpVer = 0
+End Function
+
+Public Sub Sped_CheckUpdate(Optional ByVal silent As Boolean = False)
+    Dim src As String
+    Dim txt As String
+    Dim lines() As String
+    Dim latest As String
+    Dim dlUrl As String
+    Dim notes As String
+    Dim i As Long
+
+    src = Sped_GetSetting("UpdateSource", "")
+    If Len(src) = 0 Then
+        If silent Then Exit Sub
+        src = InputBox("SPED version " & SPED_VERSION & vbCrLf & vbCrLf & "Where is the SPED version file? Enter a web address (https://...) or a file path (for example a shared Dropbox or network folder)." & vbCrLf & vbCrLf & "The file is a text file: line 1 = latest version (e.g. 1.2.0), line 2 = the download address or folder, line 3 onwards = what's new.", "SPED - check for updates")
+        src = Trim$(src)
+        If Len(src) = 0 Then Exit Sub
+        Sped_SetSetting "UpdateSource", src
+    End If
+
+    txt = ReadSource(src)
+    Sped_SetSetting "LastUpdateCheck", Format(Date, "yyyy-mm-dd")
+    If Len(Trim$(txt)) = 0 Then
+        If Not silent Then MsgBox "Could not read the version file:" & vbCrLf & src & vbCrLf & vbCrLf & "Check the location, or choose Settings > Check for updates to enter a new one.", vbExclamation, "SPED - check for updates"
+        Exit Sub
+    End If
+
+    lines = Split(Replace(txt, vbCr, ""), vbLf)
+    latest = Trim$(lines(0))
+    If UBound(lines) >= 1 Then dlUrl = Trim$(lines(1))
+    For i = 2 To UBound(lines)
+        If Len(Trim$(lines(i))) > 0 Then notes = notes & lines(i) & vbCrLf
+    Next i
+
+    If CmpVer(latest, SPED_VERSION) > 0 Then
+        If MsgBox("A newer SPED is available." & vbCrLf & vbCrLf & "You have: " & SPED_VERSION & vbCrLf & "Latest: " & latest & vbCrLf & IIf(Len(notes) > 0, vbCrLf & "What's new:" & vbCrLf & notes, "") & vbCrLf & IIf(Len(dlUrl) > 0, "Open the download location now?", ""), IIf(Len(dlUrl) > 0, vbYesNo, vbOKOnly) + vbInformation, "SPED - update available") = vbYes Then
+            On Error Resume Next
+            ThisWorkbook.FollowHyperlink dlUrl
+        End If
+    ElseIf Not silent Then
+        MsgBox "You have the latest version (" & SPED_VERSION & ").", vbInformation, "SPED - check for updates"
+    End If
+End Sub
+
+Public Sub Sped_AutoCheck()
+    On Error Resume Next
+    If Sped_GetSetting("AutoCheck", "0") <> "1" Then Exit Sub
+    If Sped_GetSetting("LastUpdateCheck", "") = Format(Date, "yyyy-mm-dd") Then Exit Sub
+    Sped_CheckUpdate True
+End Sub

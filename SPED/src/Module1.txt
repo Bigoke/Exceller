@@ -1,0 +1,725 @@
+Attribute VB_Name = "Module1"
+Public Const UI_FONT As String = "Segoe UI"
+Public Const UI_ICONFONT As String = "Segoe UI Symbol"
+Private g_ThemeLoaded As Boolean
+Private g_Dark As Boolean
+Public g_PanelPage As String
+Public g_FavBar As Excellerform
+
+Sub Selectall()
+Attribute Selectall.VB_ProcData.VB_Invoke_Func = " \n14"
+'
+' Selectall Macro
+'
+
+'
+    Cells.Select
+    
+End Sub
+Sub Selectallcopy()
+Attribute Selectallcopy.VB_ProcData.VB_Invoke_Func = " \n14"
+'
+' Selectallcopy Macro
+'
+
+'
+    Cells.Select
+    Selection.Copy
+End Sub
+Sub Copydown()
+Attribute Copydown.VB_ProcData.VB_Invoke_Func = " \n14"
+'
+' Copydown Macro
+'
+
+'
+    ActiveCell.Resize(1000, 1).Select
+    Selection.Copy
+    
+End Sub
+Sub Editor()
+'
+' Editor Macro
+'
+
+'
+    If MsgBox("Do you want to link, add or delete accounts?", vbYesNo) = vbNo Then Exit Sub
+    'MsgBox "Select a Cell in Row B", vbYesNo
+    Columns("B:B").EntireColumn.Hidden = False
+    
+        
+End Sub
+Sub NewRow_Clean()
+    Dim ws As Worksheet
+    Dim r As Long
+    
+    Set ws = ActiveSheet
+    r = ActiveCell.Row
+    If r < 2 Then
+        MsgBox "Please select a cell below row 1.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Confirm new row insert
+    If MsgBox("Do you want to add a new row?", vbYesNo) = vbNo Then Exit Sub
+    
+    ' Insert a row at current selection
+    ws.Rows(r).Insert Shift:=xlDown, CopyOrigin:=xlFormatFromLeftOrAbove
+    
+    ' Confirm account link
+    If MsgBox("Do you want to link an account as well?", vbYesNo) = vbNo Then Exit Sub
+    
+    ' Copy row above and paste into the newly inserted row
+    ws.Rows(r - 1).Copy ws.Rows(r)
+    
+    Application.CutCopyMode = False
+End Sub
+
+Sub DeleteRow()
+    ' Confirm before deleting
+    If MsgBox("Do you want to delete the current row?", vbYesNo + vbQuestion, "Delete Row") = vbNo Then Exit Sub
+    
+    ' Make sure a cell is selected
+    If Not TypeName(Selection) = "Range" Then
+        MsgBox "Please select a cell inside the row you want to delete.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Delete the row of the active cell
+    ActiveCell.EntireRow.Delete
+End Sub
+
+
+Sub Done()
+'
+' Done Macro
+'
+
+'
+    Columns("B:B").EntireColumn.Hidden = True
+    'Range("A4").Select
+    'Selection.ClearContents
+    'Range("C4").Select
+End Sub
+Sub ShowButton()
+g_PanelPage = "main"
+Excellerform.Show vbModeless
+   
+End Sub
+
+Sub AdvancedCalendars()
+    Dim dateVariable As Variant
+    dateVariable = CalendarForm.GetDate( _
+        SelectedDate:=ActiveCell.value, _
+        FirstDayOfWeek:=Monday, _
+        DateFontSize:=12, _
+        TodayButton:=True, _
+        OkayButton:=True, _
+        ShowWeekNumbers:=True, _
+        BackgroundColor:=UI_CARD, _
+        HeaderColor:=UI_PRIMARY, _
+        HeaderFontColor:=RGB(255, 255, 255), _
+        SubHeaderColor:=UI_HOVER, _
+        SubHeaderFontColor:=UI_ACTIVE_TEXT, _
+        DateColor:=UI_CARD, _
+        DateFontColor:=UI_TEXT, _
+        TrailingMonthFontColor:=UI_MUTED, _
+        DateHoverColor:=UI_HOVER, _
+        DateSelectedColor:=UI_ACTIVE, _
+        SaturdayFontColor:=UI_ACCENT, _
+        SundayFontColor:=UI_ACCENT, _
+        TodayFontColor:=UI_SUCCESS)
+    If dateVariable <> 0 Then ActiveCell = dateVariable
+End Sub
+Sub ShowSheetsForm()
+    Navigation.Show vbModeless
+End Sub
+Sub CopyCurrentSheetWithName()
+
+    Dim ws As Worksheet
+    Dim newName As String
+    Dim nameExists As Boolean
+    Dim sh As Worksheet
+    
+    Set ws = ActiveSheet
+    
+    ' Ask user for sheet name
+    newName = InputBox("Enter the name for the new sheet:", "New Sheet Name")
+    
+    ' If user cancels or leaves blank
+    If Trim(newName) = "" Then
+        MsgBox "Operation cancelled.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Check if name already exists
+    nameExists = False
+    For Each sh In ThisWorkbook.Worksheets
+        If LCase(sh.Name) = LCase(newName) Then
+            nameExists = True
+            Exit For
+        End If
+    Next sh
+    
+    If nameExists Then
+        MsgBox "A sheet with this name already exists.", vbCritical
+        Exit Sub
+    End If
+    
+    ' Copy sheet after current sheet
+    ws.Copy After:=ws
+    
+    ' Rename the copied sheet
+    ActiveSheet.Name = newName
+    
+    MsgBox "Sheet created successfully!", vbInformation
+
+End Sub
+
+
+'==========================================================================
+' Modern UI helpers (shared by all forms)
+'==========================================================================
+
+
+Public Sub UiStyleForm(ByVal frm As Object, ByVal w As Single, ByVal h As Single)
+    frm.BackColor = UI_BG
+    frm.Width = w
+    frm.Height = h
+End Sub
+
+Public Sub UiDock(ByVal frm As Object, ByVal side As String)
+    ' Place a form on the monitor Excel is showing on (screen coordinates in points).
+    Dim l As Single
+    On Error Resume Next
+    frm.StartUpPosition = 0
+    If side = "left" Then
+        l = Application.Left + 12
+    ElseIf side = "center" Then
+        l = Application.Left + (Application.Width - frm.Width) / 2
+    Else
+        l = Application.Left + Application.Width - frm.Width - 16
+    End If
+    If l < Application.Left Then l = Application.Left
+    frm.Left = l
+    If side = "center" Then
+        frm.Top = Application.Top + 120
+    Else
+        frm.Top = Application.Top + 4
+    End If
+End Sub
+
+Public Sub UiFixHeight(ByVal frm As Object, ByVal contentBottom As Single)
+    Dim want As Single
+    Dim avail As Single
+    want = contentBottom + (frm.Height - frm.InsideHeight)
+    avail = Application.Height - 60
+    If avail < 300 Then avail = 300
+    If want > avail Then
+        frm.Height = avail
+        frm.ScrollBars = 2
+        frm.KeepScrollBarsVisible = 0
+        frm.ScrollHeight = contentBottom
+    Else
+        frm.Height = want
+    End If
+End Sub
+
+Public Sub UiHook(ByVal frm As Object, ByVal lbl As Object, ByVal action As String, ByVal surf As Object, _
+                  ByVal nb As Long, ByVal nbd As Long, ByVal hb As Long, ByVal hbd As Long, _
+                  ByVal passive As Boolean, ByRef keep As Collection)
+    Dim ev As CLabelEvents
+    Set ev = New CLabelEvents
+    Set ev.HyperLabel = lbl
+    Set ev.ParentForm = frm
+    ev.Action = action
+    If Not surf Is Nothing Then Set ev.Surface = surf
+    ev.NormalBack = nb
+    ev.NormalBorder = nbd
+    ev.HoverBack = hb
+    ev.HoverBorder = hbd
+    ev.Passive = passive
+    keep.Add ev
+End Sub
+
+Public Sub UiPassive(ByVal frm As Object, ByVal lbl As Object, ByRef keep As Collection)
+    UiHook frm, lbl, "", Nothing, 0, 0, 0, 0, True, keep
+End Sub
+
+Public Sub UiHeader(ByVal frm As Object, ByVal title As String, ByVal subtitle As String, ByRef keep As Collection)
+    Dim bg As Object, t As Object, s As Object
+    Set bg = frm.Controls.Add("Forms.Label.1", "uiHdrBg", True)
+    With bg
+        .Left = 0: .Top = 0: .Width = frm.InsideWidth: .Height = 46
+        .BackStyle = 1: .BackColor = UI_HEADER: .BorderStyle = 0: .Caption = ""
+    End With
+    Set t = frm.Controls.Add("Forms.Label.1", "uiHdrTitle", True)
+    With t
+        .Left = 14: .Top = 7: .Width = frm.InsideWidth - 28: .Height = 18
+        .BackStyle = 0: .Caption = title: .ForeColor = &HFFFFFF
+        .Font.Name = UI_FONT: .Font.Size = 13: .Font.Bold = True
+    End With
+    Set s = frm.Controls.Add("Forms.Label.1", "uiHdrSub", True)
+    With s
+        .Left = 14: .Top = 27: .Width = frm.InsideWidth - 28: .Height = 14
+        .BackStyle = 0: .Caption = subtitle: .ForeColor = UI_HEADER_SUB
+        .Font.Name = UI_FONT: .Font.Size = 8
+    End With
+    UiPassive frm, bg, keep
+    UiPassive frm, t, keep
+    UiPassive frm, s, keep
+End Sub
+
+Public Sub UiSection(ByVal lbl As Object, ByVal cap As String, ByVal x As Single, ByVal y As Single, ByVal w As Single)
+    With lbl
+        .Visible = True
+        .Left = x: .Top = y: .Width = w: .Height = 12
+        .BackStyle = 0: .BorderStyle = 0: .Caption = cap
+        .ForeColor = UI_MUTED: .TextAlign = 1: .WordWrap = False
+        .Font.Name = UI_FONT: .Font.Size = 8: .Font.Bold = True
+    End With
+End Sub
+
+Public Sub UiButton(ByVal frm As Object, ByVal host As Object, ByVal key As String, ByVal glyph As Long, _
+                    ByVal cap As String, ByVal action As String, ByVal x As Single, ByVal y As Single, _
+                    ByVal w As Single, ByVal h As Single, ByVal kind As String, ByRef keep As Collection)
+    Dim bg As Object, ic As Object, tx As Object
+    Dim nb As Long, nbd As Long, hb As Long, hbd As Long, fc As Long, ifc As Long
+    Select Case kind
+        Case "P"
+            nb = UI_PRIMARY: nbd = UI_PRIMARY: hb = UI_PRIMARY_HOVER: hbd = UI_PRIMARY_HOVER: fc = &HFFFFFF: ifc = &HFFFFFF
+        Case "D"
+            nb = UI_CARD: nbd = UI_BORDER: hb = UI_DANGER_BG: hbd = UI_DANGER_BORDER: fc = UI_TEXT: ifc = UI_DANGER
+        Case "S"
+            nb = UI_CARD: nbd = UI_BORDER: hb = UI_SUCCESS_BG: hbd = UI_SUCCESS_BORDER: fc = UI_TEXT: ifc = UI_SUCCESS
+        Case Else
+            nb = UI_CARD: nbd = UI_BORDER: hb = UI_HOVER: hbd = UI_ACCENT: fc = UI_TEXT: ifc = UI_ACCENT
+    End Select
+
+    Set bg = host.Controls.Add("Forms.Label.1", "ub_" & key, True)
+    With bg
+        .Left = x: .Top = y: .Width = w: .Height = h
+        .BackStyle = 1: .BorderStyle = 1: .BorderColor = nbd: .BackColor = nb
+        .SpecialEffect = 0: .Caption = ""
+    End With
+
+    Set ic = host.Controls.Add("Forms.Label.1", "ui_" & key, True)
+    With ic
+        .Left = x + 4: .Top = y + (h - 16) / 2: .Width = 22: .Height = 16
+        .BackStyle = 0: .TextAlign = 2: .Caption = ChrW(glyph): .ForeColor = ifc
+        .Font.Name = UI_ICONFONT: .Font.Size = 11
+    End With
+
+    Set tx = host.Controls.Add("Forms.Label.1", "ut_" & key, True)
+    With tx
+        .Left = x + 30: .Top = y + (h - 14) / 2: .Width = w - 36: .Height = 14
+        .BackStyle = 0: .TextAlign = 1: .WordWrap = False: .Caption = cap: .ForeColor = fc
+        .Font.Name = UI_FONT: .Font.Size = 9
+    End With
+
+    UiHook frm, bg, action, bg, nb, nbd, hb, hbd, False, keep
+    UiHook frm, ic, action, bg, nb, nbd, hb, hbd, False, keep
+    UiHook frm, tx, action, bg, nb, nbd, hb, hbd, False, keep
+End Sub
+
+'==========================================================================
+' Ribbon callbacks (SPED tab)
+'==========================================================================
+Public Sub Rib_Panel(control As IRibbonControl)
+    ShowButton
+End Sub
+
+Public Sub Rib_Find(control As IRibbonControl)
+    f_FindAll.Show vbModeless
+End Sub
+
+Public Sub Rib_Sheets(control As IRibbonControl)
+    ShowSheetsForm
+End Sub
+
+Public Sub Rib_Calendar(control As IRibbonControl)
+    AdvancedCalendars
+End Sub
+
+Public Sub Rib_Summary(control As IRibbonControl)
+    GenerateMonthlySummary
+End Sub
+
+Public Sub Rib_CopySheet(control As IRibbonControl)
+    CopyCurrentSheetWithName
+End Sub
+
+'==========================================================================
+' Theme (Light / Dark) and settings
+'==========================================================================
+Private Function SettingsPath() As String
+    SettingsPath = Environ$("APPDATA") & "\SPED\settings.txt"
+End Function
+
+Public Function Sped_GetSetting(ByVal k As String, ByVal def As String) As String
+    Dim f As Integer
+    Dim s As String
+    Dim p As Long
+    Sped_GetSetting = def
+    If Len(Environ$("APPDATA")) = 0 Then Exit Function
+    On Error GoTo done
+    If Len(Dir(SettingsPath())) = 0 Then Exit Function
+    f = FreeFile
+    Open SettingsPath() For Input As #f
+    Do While Not EOF(f)
+        Line Input #f, s
+        p = InStr(s, "=")
+        If p > 1 Then
+            If LCase$(Trim$(Left$(s, p - 1))) = LCase$(k) Then Sped_GetSetting = Mid$(s, p + 1)
+        End If
+    Loop
+done:
+    On Error Resume Next
+    Close #f
+End Function
+
+Public Sub Sped_SetSetting(ByVal k As String, ByVal v As String)
+    Dim f As Integer
+    Dim folder As String
+    Dim s As String
+    Dim p As Long
+    Dim keys() As String
+    Dim vals() As String
+    Dim n As Long
+    Dim i As Long
+    Dim found As Boolean
+
+    On Error GoTo fail
+    folder = Environ$("APPDATA") & "\SPED"
+    If Len(Dir(folder, vbDirectory)) = 0 Then MkDir folder
+    ReDim keys(1 To 64)
+    ReDim vals(1 To 64)
+    If Len(Dir(SettingsPath())) > 0 Then
+        f = FreeFile
+        Open SettingsPath() For Input As #f
+        Do While Not EOF(f)
+            Line Input #f, s
+            p = InStr(s, "=")
+            If p > 1 And n < 63 Then
+                n = n + 1
+                keys(n) = Trim$(Left$(s, p - 1))
+                vals(n) = Mid$(s, p + 1)
+            End If
+        Loop
+        Close #f
+    End If
+    For i = 1 To n
+        If LCase$(keys(i)) = LCase$(k) Then
+            vals(i) = v
+            found = True
+        End If
+    Next i
+    If Not found Then
+        n = n + 1
+        keys(n) = k
+        vals(n) = v
+    End If
+    f = FreeFile
+    Open SettingsPath() For Output As #f
+    For i = 1 To n
+        Print #f, keys(i) & "=" & vals(i)
+    Next i
+    Close #f
+    Exit Sub
+fail:
+    On Error Resume Next
+    Close #f
+    MsgBox "Could not save the setting: " & Err.Description, vbExclamation, "SPED"
+End Sub
+
+Private Sub LoadTheme()
+    g_ThemeLoaded = True
+    g_Dark = (LCase$(Trim$(Sped_GetSetting("Theme", "Light"))) = "dark")
+End Sub
+
+Public Function UiIsDark() As Boolean
+    If Not g_ThemeLoaded Then LoadTheme
+    UiIsDark = g_Dark
+End Function
+
+Public Sub UiSetTheme(ByVal dark As Boolean)
+    g_ThemeLoaded = True
+    g_Dark = dark
+    Sped_SetSetting "Theme", IIf(dark, "Dark", "Light")
+End Sub
+
+Public Function UiPick(ByVal l As Long, ByVal d As Long) As Long
+    If UiIsDark() Then
+        UiPick = d
+    Else
+        UiPick = l
+    End If
+End Function
+
+'--- theme colours (functions, so they follow the chosen theme) ---
+Public Function UI_BG() As Long
+    UI_BG = UiPick(&HF9F6F4, &H221B16)
+End Function
+
+Public Function UI_CARD() As Long
+    UI_CARD = UiPick(&HFFFFFF, &H30261F)
+End Function
+
+Public Function UI_BORDER() As Long
+    UI_BORDER = UiPick(&HDBD5D1, &H514137)
+End Function
+
+Public Function UI_TEXT() As Long
+    UI_TEXT = UiPick(&H37291F, &HEBE7E5)
+End Function
+
+Public Function UI_MUTED() As Long
+    UI_MUTED = UiPick(&H80726B, &HAFA39C)
+End Function
+
+Public Function UI_ACCENT() As Long
+    UI_ACCENT = UiPick(&HEB6325, &HFAA560)
+End Function
+
+Public Function UI_ACCENT_DARK() As Long
+    UI_ACCENT_DARK = UiPick(&HD84E1D, &HF6823B)
+End Function
+
+Public Function UI_PRIMARY() As Long
+    UI_PRIMARY = UiPick(&HEB6325, &HEB6325)
+End Function
+
+Public Function UI_PRIMARY_HOVER() As Long
+    UI_PRIMARY_HOVER = UiPick(&HD84E1D, &HF6823B)
+End Function
+
+Public Function UI_HOVER() As Long
+    UI_HOVER = UiPick(&HFFF6EF, &H463226)
+End Function
+
+Public Function UI_ACTIVE() As Long
+    UI_ACTIVE = UiPick(&HFEEADB, &H643A1E)
+End Function
+
+Public Function UI_ACTIVE_TEXT() As Long
+    UI_ACTIVE_TEXT = UiPick(&HD84E1D, &HFDC593)
+End Function
+
+Public Function UI_DANGER() As Long
+    UI_DANGER = UiPick(&H2626DC, &H7171F8)
+End Function
+
+Public Function UI_DANGER_BG() As Long
+    UI_DANGER_BG = UiPick(&HF2F2FE, &H201C3C)
+End Function
+
+Public Function UI_DANGER_BORDER() As Long
+    UI_DANGER_BORDER = UiPick(&HA5A5FC, &H1D1D7F)
+End Function
+
+Public Function UI_SUCCESS() As Long
+    UI_SUCCESS = UiPick(&H4AA316, &H80DE4A)
+End Function
+
+Public Function UI_SUCCESS_BG() As Long
+    UI_SUCCESS_BG = UiPick(&HF4FDF0, &H223016)
+End Function
+
+Public Function UI_SUCCESS_BORDER() As Long
+    UI_SUCCESS_BORDER = UiPick(&HACEF86, &H346516)
+End Function
+
+Public Function UI_HEADER() As Long
+    UI_HEADER = UiPick(&H3B291E, &H17110D)
+End Function
+
+Public Function UI_HEADER_SUB() As Long
+    UI_HEADER_SUB = UiPick(&HB8A394, &H9E948B)
+End Function
+
+
+Public Sub Sped_ShowPanel(ByVal page As String)
+    g_PanelPage = page
+    On Error Resume Next
+    Unload Excellerform
+    On Error GoTo 0
+    Excellerform.Show vbModeless
+End Sub
+
+Public Sub Sped_ReopenPanel()
+    Excellerform.Show vbModeless
+End Sub
+
+Public Sub Rib_Settings(control As IRibbonControl)
+    Sped_ShowPanel "settings"
+End Sub
+
+'==========================================================================
+' Icon-only button (used by the favourites bar)
+'==========================================================================
+Public Sub UiIconButton(ByVal frm As Object, ByVal key As String, ByVal glyph As Long, ByVal tip As String, _
+                        ByVal action As String, ByVal x As Single, ByVal y As Single, ByVal sz As Single, _
+                        ByRef keep As Collection)
+    Dim bg As Object, ic As Object
+    Set bg = frm.Controls.Add("Forms.Label.1", "ub_" & key, True)
+    With bg
+        .Left = x: .Top = y: .Width = sz: .Height = sz
+        .BackStyle = 1: .BorderStyle = 1: .BorderColor = UI_BORDER: .BackColor = UI_CARD
+        .SpecialEffect = 0: .Caption = "": .ControlTipText = tip
+    End With
+    Set ic = frm.Controls.Add("Forms.Label.1", "ui_" & key, True)
+    With ic
+        .Left = x: .Top = y + (sz - 18) / 2: .Width = sz: .Height = 18
+        .BackStyle = 0: .TextAlign = 2: .Caption = ChrW(glyph): .ForeColor = UI_ACCENT
+        .Font.Name = UI_ICONFONT: .Font.Size = 13: .ControlTipText = tip
+    End With
+    UiHook frm, bg, action, bg, UI_CARD, UI_BORDER, UI_HOVER, UI_ACCENT, False, keep
+    UiHook frm, ic, action, bg, UI_CARD, UI_BORDER, UI_HOVER, UI_ACCENT, False, keep
+End Sub
+
+'==========================================================================
+' Favourites bar: command table, pinned list, show / hide
+'==========================================================================
+Public Function Fav_AllKeys() As Variant
+    Fav_AllKeys = Array("selall", "selcopy", "copydown", "newrow", "delrow", "find", "calendar", "sheets", "copysheet", "summary", _
+                        "tidy", "dates", "nums", "cmpr", "cmpc", "inspect", "protect", "unprotect", _
+                        "sortaz", "sortza", "toc", "auall", "auclear", "undo", "runlog")
+End Function
+
+Public Function Fav_Info(ByVal key As String, ByRef glyph As Long, ByRef cap As String, ByRef act As String) As Boolean
+    Fav_Info = True
+    Select Case key
+        Case "selall": glyph = &H25A3: cap = "Select all": act = "Act_SelectAll"
+        Case "selcopy": glyph = &H2750: cap = "Select && copy": act = "Act_SelectCopy"
+        Case "copydown": glyph = &H2B07: cap = "Copy down": act = "Act_CopyDown"
+        Case "newrow": glyph = &H271A: cap = "New row": act = "Act_NewRow"
+        Case "delrow": glyph = &H2716: cap = "Delete row": act = "Act_DeleteRow"
+        Case "find": glyph = &H2315: cap = "Find all": act = "Act_Find"
+        Case "calendar": glyph = &H25A6: cap = "Calendar": act = "Act_Calendar"
+        Case "sheets": glyph = &H2630: cap = "Sheets list": act = "Act_Sheets"
+        Case "copysheet": glyph = &H2750: cap = "Copy sheet": act = "Act_CopySheet"
+        Case "summary": glyph = &H3A3: cap = "Monthly summary": act = "Act_Summary"
+        Case "tidy": glyph = &H2728: cap = "Case and tidy": act = "Act_Tidy"
+        Case "dates": glyph = &H25A6: cap = "Fix dates": act = "Act_FixDates"
+        Case "nums": glyph = &H23: cap = "Fix numbers": act = "Act_FixNumbers"
+        Case "cmpr": glyph = &H2194: cap = "Compare ranges": act = "Act_CmpRanges"
+        Case "cmpc": glyph = &H2261: cap = "Compare columns": act = "Act_CmpCols"
+        Case "inspect": glyph = &H2315: cap = "Workbook inspector": act = "Act_Inspect"
+        Case "protect": glyph = &H25A0: cap = "Protect all sheets": act = "Act_ProtectAll"
+        Case "unprotect": glyph = &H25A1: cap = "Unprotect all sheets": act = "Act_UnprotectAll"
+        Case "sortaz": glyph = &H2193: cap = "Sort sheets A-Z": act = "Act_SortAZ"
+        Case "sortza": glyph = &H2191: cap = "Sort sheets Z-A": act = "Act_SortZA"
+        Case "toc": glyph = &H2630: cap = "Contents sheet": act = "Act_Contents"
+        Case "auall": glyph = &H2714: cap = "Audit: highlight all": act = "Act_AuAll"
+        Case "auclear": glyph = &H2716: cap = "Audit: clear colours": act = "Act_AuClear"
+        Case "undo": glyph = &H21B6: cap = "Undo last SPED change": act = "Act_Undo"
+        Case "runlog": glyph = &H2630: cap = "Run log": act = "Act_RunLog"
+        Case Else: Fav_Info = False
+    End Select
+End Function
+
+Public Function Fav_List() As String
+    Fav_List = Trim$(Sped_GetSetting("Favs", ""))
+End Function
+
+Public Function Fav_Has(ByVal key As String) As Boolean
+    Fav_Has = (InStr("," & Fav_List() & ",", "," & key & ",") > 0)
+End Function
+
+Public Function Fav_Toggle(ByVal key As String) As Boolean
+    ' Returns True when the key is pinned afterwards. Keeps the standard order.
+    Dim allK As Variant
+    Dim i As Long
+    Dim cur As String
+    Dim out As String
+    Dim want As Boolean
+    want = Not Fav_Has(key)
+    cur = "," & Fav_List() & ","
+    allK = Fav_AllKeys()
+    For i = LBound(allK) To UBound(allK)
+        If CStr(allK(i)) = key Then
+            If want Then out = out & "," & key
+        ElseIf InStr(cur, "," & CStr(allK(i)) & ",") > 0 Then
+            out = out & "," & CStr(allK(i))
+        End If
+    Next i
+    If Len(out) > 0 Then out = Mid$(out, 2)
+    Sped_SetSetting "Favs", out
+    Fav_Toggle = want
+End Function
+
+Public Sub Fav_Show()
+    Dim keepPage As String
+    If Len(Fav_List()) = 0 Then
+        MsgBox "No favourites pinned yet." & vbCrLf & "Open SPED > Settings > Favourites and tick the buttons you use most.", vbInformation, "SPED"
+        Exit Sub
+    End If
+    Fav_Hide
+    keepPage = g_PanelPage
+    g_PanelPage = "favs"
+    Set g_FavBar = New Excellerform
+    g_FavBar.Show vbModeless
+    g_PanelPage = keepPage
+    Sped_SetSetting "FavBar", "1"
+End Sub
+
+Public Sub Fav_Hide()
+    Dim f As Excellerform
+    On Error Resume Next
+    Set f = g_FavBar
+    Set g_FavBar = Nothing
+    If Not f Is Nothing Then Unload f
+End Sub
+
+Public Sub Fav_Off()
+    Fav_Hide
+    Sped_SetSetting "FavBar", "0"
+End Sub
+
+Public Function Fav_IsOn() As Boolean
+    Fav_IsOn = Not (g_FavBar Is Nothing)
+End Function
+
+Public Sub Fav_Closed(ByVal closeMode As Integer)
+    Set g_FavBar = Nothing
+    If closeMode = 0 Then Sped_SetSetting "FavBar", "0"
+End Sub
+
+Public Sub Sped_Startup()
+    On Error Resume Next
+    Sped_AutoCheck
+    If Sped_GetSetting("FavBar", "0") = "1" Then
+        If Len(Fav_List()) > 0 Then Fav_Show
+    End If
+End Sub
+
+Public Sub Sped_ChangeSource()
+    Dim s As String
+    s = InputBox("Where is the SPED version file? Enter a web address (https://...) or a file path." & vbCrLf & "Leave empty to clear it.", "SPED - update location", Sped_GetSetting("UpdateSource", ""))
+    If StrPtr(s) = 0 Then Exit Sub
+    Sped_SetSetting "UpdateSource", Trim$(s)
+End Sub
+
+'==========================================================================
+' Ribbon: Data group dispatcher
+'==========================================================================
+Public Sub Rib_Data(control As IRibbonControl)
+    Select Case control.ID
+        Case "dtTidy": Cl_Tidy
+        Case "dtDates": Cl_FixDates
+        Case "dtNums": Cl_FixNumbers
+        Case "dtCmpR": Cmp_Ranges
+        Case "dtCmpC": Cmp_Columns
+        Case "dtInspect": Insp_Run
+        Case "dtProt": Pr_ProtectAll
+        Case "dtUnprot": Pr_UnprotectAll
+        Case "dtForget": Pr_Forget
+        Case "dtUndo": Undo_Last
+        Case "dtLog": Log_Show
+        Case "dtFavBar"
+            If Fav_IsOn() Then Fav_Off Else Fav_Show
+        Case "dtFavEdit": Sped_ShowPanel "favsedit"
+        Case "dtUpdate": Sped_CheckUpdate False
+        Case "dtData": Sped_ShowPanel "tools3"
+    End Select
+End Sub

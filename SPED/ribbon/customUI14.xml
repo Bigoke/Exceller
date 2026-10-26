@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui" onLoad="Rib_OnLoad">
+  <ribbon>
+    <tabs>
+      <tab id="spedTab" label="SPED" insertAfterMso="TabHome">
+        <group id="spedMain" label="SPED">
+          <dynamicMenu id="spedCellFmt" label="Cell Format" size="large" imageMso="FormatPainter"
+                       screentip="Cell Format" supertip="Pick a saved format, then click or drag over cells to apply it. Save new formats from any cell."
+                       getContent="Rib_CfMenu"/>
+          <button id="spedPanel" label="Open panel" size="large" imageMso="TableInsert"
+                  screentip="SPED panel" supertip="Open the SPED toolbar with all tools."
+                  onAction="Rib_Panel"/>
+          <button id="spedFind" label="Find all" size="large" imageMso="FindDialog"
+                  screentip="Find all" supertip="Search the active sheet as you type."
+                  onAction="Rib_Find"/>
+          <button id="spedSheets" label="Sheets" size="large" imageMso="SheetInsert"
+                  screentip="Sheets" supertip="Jump to any worksheet."
+                  onAction="Rib_Sheets"/>
+        </group>
+        <group id="spedTools" label="Tools">
+          <button id="spedCalendar" label="Calendar" size="large" imageMso="DateAndTimeInsert"
+                  screentip="Calendar" supertip="Pick a date for the active cell."
+                  onAction="Rib_Calendar"/>
+          <button id="spedSummary" label="Monthly summary" size="large" imageMso="ChartInsert"
+                  screentip="Monthly summary" supertip="Create a monthly summary of the active sheet."
+                  onAction="Rib_Summary"/>
+          <button id="spedSettings" label="Settings" size="large" imageMso="PropertySheet"
+                  screentip="Settings" supertip="Theme, version and updates, favourites bar."
+                  onAction="Rib_Settings"/>
+          <button id="spedCopySheet" label="Copy sheet" size="large" imageMso="Copy"
+                  screentip="Copy sheet" supertip="Copy the active sheet under a new name."
+                  onAction="Rib_CopySheet"/>
+        </group>
+        <group id="spedSheetsG" label="Sheets">
+          <menu id="shSort" label="Sort sheets" image="img_sort" size="large">
+            <button id="shAZ" label="A to Z" onAction="Rib_Sheet" tag="sortaz"/>
+            <button id="shZA" label="Z to A" onAction="Rib_Sheet" tag="sortza"/>
+          </menu>
+          <button id="shRename" label="Bulk rename" onAction="Rib_Sheet" tag="rename" image="img_rename" size="large"/>
+          <menu id="shColour" label="Tab colour" image="img_tabcol" size="large">
+            <button id="shC_red" label="Red" onAction="Rib_Sheet" tag="col:red"/>
+            <button id="shC_orange" label="Orange" onAction="Rib_Sheet" tag="col:orange"/>
+            <button id="shC_yellow" label="Yellow" onAction="Rib_Sheet" tag="col:yellow"/>
+            <button id="shC_green" label="Green" onAction="Rib_Sheet" tag="col:green"/>
+            <button id="shC_teal" label="Teal" onAction="Rib_Sheet" tag="col:teal"/>
+            <button id="shC_blue" label="Blue" onAction="Rib_Sheet" tag="col:blue"/>
+            <button id="shC_purple" label="Purple" onAction="Rib_Sheet" tag="col:purple"/>
+            <button id="shC_pink" label="Pink" onAction="Rib_Sheet" tag="col:pink"/>
+            <button id="shC_grey" label="Grey" onAction="Rib_Sheet" tag="col:grey"/>
+            <button id="shC_dark" label="Dark" onAction="Rib_Sheet" tag="col:dark"/>
+            <button id="shC_none" label="No colour" onAction="Rib_Sheet" tag="col:none"/>
+          </menu>
+          <menu id="shHide" label="Hide / unhide" image="img_hide" size="large">
+            <button id="shHs" label="Hide selected sheets" onAction="Rib_Sheet" tag="hidesel"/>
+            <button id="shHo" label="Hide all but this one" onAction="Rib_Sheet" tag="hideothers"/>
+            <button id="shHc" label="Hide sheets with this tab colour" onAction="Rib_Sheet" tag="hidecolour"/>
+            <button id="shUc" label="Unhide sheets with this tab colour" onAction="Rib_Sheet" tag="unhidecolour"/>
+            <button id="shHn" label="Hide by name..." onAction="Rib_Sheet" tag="hidename"/>
+            <button id="shUn" label="Unhide by name..." onAction="Rib_Sheet" tag="unhidename"/>
+            <button id="shUa" label="Unhide all" onAction="Rib_Sheet" tag="unhideall"/>
+          </menu>
+          <button id="shToc" label="Contents" onAction="Rib_Sheet" tag="toc" image="img_toc" size="large" supertip="Make a Contents sheet with links to every sheet."/>
+        </group>
+        <group id="spedAuditG" label="Audit">
+          <menu id="auHi" label="Highlight" image="img_highlight" size="large">
+            <button id="auAll" label="All checks (this sheet)" onAction="Rib_Audit" tag="all"/>
+            <button id="auAllS" label="All checks (every sheet)" onAction="Rib_Audit" tag="allsheets"/>
+            <button id="auF" label="Formulas" onAction="Rib_Audit" tag="formulas"/>
+            <button id="auH" label="Hard-coded numbers" onAction="Rib_Audit" tag="hard"/>
+            <button id="auE" label="Errors" onAction="Rib_Audit" tag="errors"/>
+            <button id="auN" label="Negative values" onAction="Rib_Audit" tag="neg"/>
+          </menu>
+          <button id="auClear" label="Clear colours" onAction="Rib_Audit" tag="clear" image="img_clear" size="large"/>
+          <button id="auSum" label="Summary" onAction="Rib_Audit" tag="summary" image="img_summary" size="large"/>
+        </group>
+        <group id="spedDataG" label="Data">
+          <menu id="dtClean" label="Clean" image="img_clean" size="large">
+            <button id="dtTidy" label="Case and tidy..." onAction="Rib_Data"/>
+            <button id="dtDates" label="Fix dates..." onAction="Rib_Data"/>
+            <button id="dtNums" label="Fix numbers..." onAction="Rib_Data"/>
+          </menu>
+          <menu id="dtCompare" label="Compare" image="img_compare" size="large">
+            <button id="dtCmpR" label="Compare two ranges..." onAction="Rib_Data"/>
+            <button id="dtCmpC" label="Compare two columns..." onAction="Rib_Data"/>
+          </menu>
+          <button id="dtInspect" label="Inspector" onAction="Rib_Data" image="img_inspect" size="large" supertip="List hidden sheets, external links, named ranges, unused ranges and styles."/>
+          <menu id="dtProtect" label="Protection" image="img_protect" size="large">
+            <button id="dtProt" label="Protect all sheets..." onAction="Rib_Data"/>
+            <button id="dtUnprot" label="Unprotect all sheets..." onAction="Rib_Data"/>
+            <button id="dtForget" label="Forget saved passwords" onAction="Rib_Data"/>
+          </menu>
+          <menu id="dtHistory" label="History" image="img_history" size="large">
+            <button id="dtUndo" label="Undo last SPED change" onAction="Rib_Data"/>
+            <button id="dtLog" label="Run log" onAction="Rib_Data"/>
+          </menu>
+          <menu id="dtFav" label="Favourites" image="img_fav" size="large">
+            <button id="dtFavBar" label="Show / hide favourites bar" onAction="Rib_Data"/>
+            <button id="dtFavEdit" label="Choose favourites..." onAction="Rib_Data"/>
+          </menu>
+          <button id="dtUpdate" label="Updates" onAction="Rib_Data" image="img_update" size="large" supertip="Show the version number and check for a newer SPED."/>
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>
